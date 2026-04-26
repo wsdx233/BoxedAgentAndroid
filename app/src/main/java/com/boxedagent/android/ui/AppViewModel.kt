@@ -23,6 +23,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import java.io.File
 import java.util.Base64
 
 private const val DEFAULT_BASE_URL = "http://10.0.2.2:8080"
@@ -69,6 +70,7 @@ data class AppUiState(
 }
 
 data class QueueState(val steering: List<String> = emptyList(), val followUp: List<String> = emptyList())
+data class CachedPreviewFile(val name: String, val mimeType: String, val file: File, val size: Long)
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("boxedagent", Context.MODE_PRIVATE)
@@ -101,6 +103,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun emit(message: String) = _state.update { it.copy(event = UiEvent(message = message)) }
     fun clearEvent(id: Long) = _state.update { if (it.event?.id == id) it.copy(event = null) else it }
+    fun rememberedFileBrowserPath(boxId: String?): String = boxId?.takeIf { it.isNotBlank() }?.let { prefs.getString("fileBrowserPath:$it", ".") }?.takeIf { it.isNotBlank() } ?: "."
+    fun rememberFileBrowserPath(boxId: String?, path: String) {
+        val id = boxId?.takeIf { it.isNotBlank() } ?: return
+        prefs.edit().putString("fileBrowserPath:$id", path.ifBlank { "." }).apply()
+    }
     fun insertIntoComposer(text: String, returnToChat: Boolean = true) = _state.update { it.copy(composerInsert = ComposerInsert(sessionId = it.activeSessionId, text = text), selectedPanel = if (returnToChat) MainPanel.Chat else it.selectedPanel) }
     fun clearComposerInsert(id: Long) = _state.update { if (it.composerInsert?.id == id) it.copy(composerInsert = null) else it }
 
@@ -518,6 +525,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return api.downloadFile(boxId, path)
     }
 
+    suspend fun downloadFileToCache(path: String, onProgress: (bytesRead: Long, totalBytes: Long) -> Unit): CachedPreviewFile {
+        val boxId = _state.value.activeBoxId ?: throw ApiException("请先选择 Box")
+        val dir = File(getApplication<Application>().cacheDir, "file-previews/$boxId").apply { mkdirs() }
+        val fallbackName = path.substringAfterLast('/').ifBlank { "preview" }
+        val tmp = File(dir, ".${System.nanoTime()}-${safeCacheFileName(fallbackName)}.part")
+        return try {
+            val downloaded = api.downloadFileTo(boxId, path, tmp, onProgress)
+            val target = uniqueCacheFile(dir, downloaded.name)
+            if (!tmp.renameTo(target)) {
+                tmp.copyTo(target, overwrite = true)
+                tmp.delete()
+            }
+            CachedPreviewFile(downloaded.name, downloaded.mimeType, target, downloaded.bytesWritten)
+        } catch (e: Exception) {
+            tmp.delete()
+            throw e
+        }
+    }
+
     suspend fun getPiConfig(): PiConfigResponse {
         val boxId = _state.value.activeBoxId ?: throw ApiException("请先选择 Box")
         return api.getPiConfig(boxId)
@@ -566,6 +592,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         try { block(); emit("$label 成功") }
         catch (e: Exception) { emit("$label 失败：${e.message}") }
     }
+}
+
+private fun safeCacheFileName(name: String): String = name
+    .replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]+"), "_")
+    .trim()
+    .take(120)
+    .ifBlank { "preview" }
+
+private fun uniqueCacheFile(dir: File, name: String): File {
+    val safe = safeCacheFileName(name)
+    val dot = safe.lastIndexOf('.').takeIf { it > 0 && it < safe.lastIndex }
+    val base = dot?.let { safe.substring(0, it) } ?: safe
+    val ext = dot?.let { safe.substring(it) }.orEmpty()
+    var candidate = File(dir, safe)
+    var i = 1
+    while (candidate.exists()) {
+        candidate = File(dir, "$base-$i$ext")
+        i++
+    }
+    return candidate
 }
 
 fun normalizeCwd(value: String): String {

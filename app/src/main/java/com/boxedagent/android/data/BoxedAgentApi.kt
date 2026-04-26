@@ -24,6 +24,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.IOException
+import java.io.File
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -159,6 +160,63 @@ class BoxedAgentApi(
         }
     }
 
+    suspend fun downloadFileTo(
+        boxId: String,
+        path: String,
+        destination: File,
+        onProgress: (bytesRead: Long, totalBytes: Long) -> Unit = { _, _ -> }
+    ): DownloadedDiskFile = suspendCancellableCoroutine { cont ->
+        val builder = Request.Builder().url(url("/api/boxes/${encPath(boxId)}/files/download?path=${enc(path)}")).get()
+        addAuth(builder)
+        val call = client.newCall(builder.build())
+        cont.invokeOnCancellation {
+            call.cancel()
+            runCatching { destination.delete() }
+        }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (!cont.isCancelled) cont.resumeWithException(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use { res ->
+                    try {
+                        if (!res.isSuccessful) throw errorFromResponse(res)
+                        val body = res.body ?: throw ApiException("下载响应为空")
+                        val contentType = res.header("content-type")?.substringBefore(';')?.trim()
+                        val disposition = res.header("content-disposition")
+                        val fallback = path.substringAfterLast('/').ifBlank { "download" }
+                        val total = body.contentLength()
+                        var read = 0L
+                        destination.parentFile?.mkdirs()
+                        destination.outputStream().use { output ->
+                            body.byteStream().use { input ->
+                                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                while (cont.isActive) {
+                                    val n = input.read(buffer)
+                                    if (n < 0) break
+                                    output.write(buffer, 0, n)
+                                    read += n
+                                    onProgress(read, total)
+                                }
+                            }
+                        }
+                        if (!cont.isActive) {
+                            call.cancel()
+                            runCatching { destination.delete() }
+                            return
+                        }
+                        onProgress(read, total)
+                        cont.resume(DownloadedDiskFile(fileNameFromDisposition(disposition) ?: fallback, contentType ?: "application/octet-stream", destination, read))
+                    } catch (t: Throwable) {
+                        runCatching { destination.delete() }
+                        if (!cont.isCancelled) cont.resumeWithException(t)
+                    }
+                }
+            }
+        })
+    }
+
     fun downloadUrl(boxId: String, path: String): String = "$baseUrl/api/boxes/${encPath(boxId)}/files/download?path=${enc(path)}"
     fun codeServerUrl(boxId: String): String = "$baseUrl/codeserver/${encPath(boxId)}/"
     fun cookieHeader(): String = cookieJar.cookieHeader(baseUrl)
@@ -253,6 +311,7 @@ class BoxedAgentApi(
 }
 
 data class DownloadedFile(val name: String, val mimeType: String, val bytes: ByteArray)
+data class DownloadedDiskFile(val name: String, val mimeType: String, val file: File, val bytesWritten: Long)
 
 @kotlinx.serialization.Serializable
 private object UnitBody

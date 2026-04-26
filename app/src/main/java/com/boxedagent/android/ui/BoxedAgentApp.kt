@@ -1,5 +1,6 @@
 package com.boxedagent.android.ui
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.database.Cursor
@@ -7,6 +8,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.webkit.CookieManager
+import android.webkit.MimeTypeMap
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -60,10 +62,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.FileProvider
 import com.boxedagent.android.TerminalActivity
 import com.boxedagent.android.data.*
 import io.noties.prism4j.GrammarLocator
 import io.noties.prism4j.Prism4j
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -82,6 +87,8 @@ import kotlin.math.max
 
 private val UiJson = Json { prettyPrint = true; ignoreUnknownKeys = true; explicitNulls = false }
 private val ThinkingLevels = listOf("off", "minimal", "low", "medium", "high", "xhigh")
+private const val PREVIEW_LARGE_FILE_THRESHOLD_BYTES: Long = 10L * 1024L * 1024L
+private const val TOOL_CODE_COLLAPSED_CHARS = 12_000
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -444,6 +451,9 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         attachments = attachments + picked
         text = appendComposerRefs(text, picked.map { fileRef(uploadedAttachmentPath(it.name)) })
     }
+    val lastMessage = state.activeMessages.lastOrNull()
+    val latestProgressMessage = state.activeMessages.lastOrNull { it.role == "tool" || (it.role == "assistant" && it.thinking?.isNotBlank() == true) }
+    val latestProgressMessageId = latestProgressMessage?.id
 
     LaunchedEffect(state.composerInsert?.id) {
         val insert = state.composerInsert ?: return@LaunchedEffect
@@ -453,8 +463,24 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         }
     }
 
-    LaunchedEffect(state.activeMessages.size, state.activeMessages.lastOrNull()?.text, state.activeMessages.lastOrNull()?.toolResult) {
-        if (state.activeMessages.isNotEmpty()) listState.animateScrollToItem(state.activeMessages.lastIndex)
+    LaunchedEffect(
+        state.activeMessages.size,
+        lastMessage?.id,
+        lastMessage?.text?.length,
+        lastMessage?.thinking?.length,
+        lastMessage?.toolResult?.length,
+        lastMessage?.toolStatus,
+        latestProgressMessageId,
+        latestProgressMessage?.thinking?.length,
+        latestProgressMessage?.toolResult?.length,
+        latestProgressMessage?.toolStatus,
+        state.activeTurn
+    ) {
+        if (state.activeMessages.isNotEmpty() || state.activeTurn) {
+            withFrameNanos { }
+            val total = listState.layoutInfo.totalItemsCount
+            if (total > 0) listState.scrollToItem(total - 1)
+        }
     }
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }
@@ -494,9 +520,6 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         return
     }
     val canSend = text.isNotBlank() || attachments.isNotEmpty()
-    val latestProgressMessageId = remember(state.activeMessages) {
-        state.activeMessages.lastOrNull { it.role == "tool" || (it.role == "assistant" && it.thinking?.isNotBlank() == true) }?.id
-    }
     val chatBg = MaterialTheme.colorScheme.background
 
     Column(Modifier.fillMaxSize().background(chatBg)) {
@@ -527,6 +550,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     )
                 }
                 if (state.activeTurn) item { ProcessingCard() }
+                item(key = "__chat_bottom") { Spacer(Modifier.height(1.dp)) }
             }
             ScrollQuickActions(
                 visible = quickActionsVisible && state.activeMessages.any { it.role == "user" },
@@ -1212,8 +1236,9 @@ private fun DiffBlock(title: String, lines: List<DiffLine>, maxLines: Int = 240)
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val bg = if (dark) Color(0xFF0F0D13) else Color(0xFFF8FAFC)
     val headerBg = if (dark) Color(0xFF191820) else Color(0xFFE7E9EE)
-    val visible = lines.take(maxLines)
     val clipped = lines.size > maxLines
+    var expanded by remember { mutableStateOf(false) }
+    val visible = if (clipped && !expanded) lines.take(maxLines) else lines
     val text = lines.joinToString("\n") { line ->
         when (line.type) {
             DiffLineType.Add -> "+${line.text}"
@@ -1228,13 +1253,19 @@ private fun DiffBlock(title: String, lines: List<DiffLine>, maxLines: Int = 240)
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(Modifier.fillMaxWidth().background(headerBg).padding(horizontal = 10.dp, vertical = 5.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (clipped) {
+                TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                    Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(13.dp))
+                    Text(if (expanded) "收起" else "展开全部", fontSize = 12.sp)
+                }
+            }
             TextButton(onClick = { clipboard.setText(AnnotatedString(text)) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) { Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp)); Text("复制", fontSize = 12.sp) }
         }
         SelectionContainer {
             Column(Modifier.fillMaxWidth().background(bg)) {
                 visible.forEach { line -> DiffLineRow(line) }
-                if (clipped) DiffLineRow(DiffLine(DiffLineType.Meta, "… 还有 ${lines.size - maxLines} 行 diff 未展开，共 ${lines.size} 行"))
+                if (clipped && !expanded) DiffLineRow(DiffLine(DiffLineType.Meta, "… 已隐藏 ${lines.size - maxLines} 行 diff，共 ${lines.size} 行；点击“展开全部”查看完整结果"))
             }
         }
     }
@@ -1352,22 +1383,39 @@ private fun JsonObject.stringValue(key: String): String? = when (val value = thi
 }
 
 @Composable
-private fun CodeBlock(title: String, text: String) {
+private fun CodeBlock(title: String, text: String, collapsedChars: Int = TOOL_CODE_COLLAPSED_CHARS) {
     val clipboard = LocalClipboardManager.current
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val bg = if (dark) Color(0xFF101014) else Color(0xFFF1F3F5)
     val headerBg = if (dark) Color(0xFF191820) else Color(0xFFE7E9EE)
     val label = if (dark) Color(0xFFC9C3D4) else Color(0xFF4B5563)
+    val clipped = text.length > collapsedChars
+    var expanded by remember { mutableStateOf(false) }
+    val displayText = if (clipped && !expanded) text.take(collapsedChars) else text
     OutlinedCard(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.outlinedCardColors(containerColor = bg),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(Modifier.fillMaxWidth().background(headerBg).padding(horizontal = 10.dp, vertical = 5.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = MaterialTheme.typography.labelSmall, color = label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(title, style = MaterialTheme.typography.labelSmall, color = label, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            if (clipped) {
+                TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                    Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(13.dp))
+                    Text(if (expanded) "收起" else "展开全部", fontSize = 12.sp)
+                }
+            }
             TextButton(onClick = { clipboard.setText(AnnotatedString(text)) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) { Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp)); Text("复制", fontSize = 12.sp) }
         }
-        SelectionContainer { Text(highlightCode(text.take(12000), title, dark), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().background(bg).padding(10.dp), lineHeight = 18.sp) }
+        SelectionContainer { Text(highlightCode(displayText, title, dark), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().background(bg).padding(10.dp), lineHeight = 18.sp) }
+        if (clipped && !expanded) {
+            Text(
+                "已隐藏 ${text.length - displayText.length} 个字符，点击“展开全部”查看完整结果。",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth().background(bg).padding(start = 10.dp, end = 10.dp, bottom = 8.dp)
+            )
+        }
     }
 }
 
@@ -1808,7 +1856,7 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
-    var path by remember(state.activeBoxId) { mutableStateOf(".") }
+    var path by remember(state.activeBoxId) { mutableStateOf(viewModel.rememberedFileBrowserPath(state.activeBoxId)) }
     var entries by remember { mutableStateOf<List<FileEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -1817,6 +1865,9 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
     var pendingDownload by remember { mutableStateOf<DownloadedFile?>(null) }
     var actionEntry by remember { mutableStateOf<FileEntry?>(null) }
     var deleteEntry by remember { mutableStateOf<FileEntry?>(null) }
+    var largePreviewEntry by remember { mutableStateOf<FileEntry?>(null) }
+    var previewDownload by remember { mutableStateOf<PreviewDownloadState?>(null) }
+    var previewJob by remember { mutableStateOf<Job?>(null) }
     val createDoc = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri -> val file = pendingDownload; if (uri != null && file != null) context.contentResolver.openOutputStream(uri)?.use { it.write(file.bytes) }; pendingDownload = null }
     val pickUpload = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         scope.launch {
@@ -1824,7 +1875,30 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
             loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it })
         }
     }
+    DisposableEffect(Unit) { onDispose { previewJob?.cancel() } }
     fun reload() { scope.launch { loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) } }
+    fun beginPreviewDownload(entry: FileEntry) {
+        previewJob?.cancel()
+        previewDownload = PreviewDownloadState(entry = entry, bytesRead = 0L, totalBytes = entry.size.takeIf { it > 0 } ?: -1L)
+        previewJob = scope.launch {
+            try {
+                val cached = viewModel.downloadFileToCache(entry.path) { read, total ->
+                    previewDownload = PreviewDownloadState(entry = entry, bytesRead = read, totalBytes = total.takeIf { it > 0 } ?: entry.size.takeIf { it > 0 } ?: -1L)
+                }
+                previewDownload = null
+                context.openCachedPreview(cached) { viewModel.emit(it) }
+            } catch (e: CancellationException) {
+                previewDownload = null
+                viewModel.emit("已取消预览下载")
+            } catch (e: Exception) {
+                previewDownload = null
+                viewModel.emit("预览失败：${e.message}")
+            }
+        }
+    }
+    fun requestPreview(entry: FileEntry) {
+        if (entry.size >= PREVIEW_LARGE_FILE_THRESHOLD_BYTES) largePreviewEntry = entry else beginPreviewDownload(entry)
+    }
     fun attach(entry: FileEntry) {
         if (state.activeSessionId == null) {
             viewModel.emit("请先选择 Session")
@@ -1834,7 +1908,10 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
         viewModel.emit("已附加 ${entry.name}")
     }
     fun createTargetPath(name: String): String = if (path == "." || path.isBlank()) name else "$path/$name"
-    LaunchedEffect(state.activeBoxId, path) { loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) }
+    LaunchedEffect(state.activeBoxId, path) {
+        viewModel.rememberFileBrowserPath(state.activeBoxId, path)
+        loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it })
+    }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1880,7 +1957,7 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
                 items(entries.sortedWith(compareBy<FileEntry> { it.type != "directory" }.thenBy { it.name.lowercase() }), key = { it.path }) { entry ->
                     FileRow(
                         entry = entry,
-                        onOpen = { if (entry.type == "directory") path = entry.path else actionEntry = entry },
+                        onOpen = { if (entry.type == "directory") path = entry.path else requestPreview(entry) },
                         onAttach = { attach(entry) },
                         onMore = { actionEntry = entry }
                     )
@@ -1893,6 +1970,7 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
         ModalBottomSheet(onDismissRequest = { actionEntry = null }) {
             SheetHeader(if (entry.type == "directory") Icons.Rounded.Folder else Icons.Rounded.Description, entry.name, workspaceAbsPath(entry.path))
             if (entry.type == "directory") ListItem(headlineContent = { Text("打开目录") }, leadingContent = { Icon(Icons.Rounded.FolderOpen, contentDescription = null) }, modifier = Modifier.clickable { path = entry.path; actionEntry = null })
+            if (entry.type == "file") ListItem(headlineContent = { Text("预览打开") }, supportingContent = { Text("下载到应用缓存后使用本机应用打开") }, leadingContent = { Icon(Icons.Rounded.Visibility, contentDescription = null) }, modifier = Modifier.clickable { actionEntry = null; requestPreview(entry) })
             if (entry.type == "file") ListItem(headlineContent = { Text("快速附加到消息") }, supportingContent = { Text(fileRef(workspaceAbsPath(entry.path))) }, leadingContent = { Icon(Icons.Rounded.AttachFile, contentDescription = null) }, modifier = Modifier.clickable { attach(entry); actionEntry = null })
             ListItem(headlineContent = { Text("复制路径") }, supportingContent = { Text(workspaceAbsPath(entry.path)) }, leadingContent = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }, modifier = Modifier.clickable { clipboard.setText(AnnotatedString(workspaceAbsPath(entry.path))); actionEntry = null; viewModel.emit("已复制路径") })
             if (entry.type == "file") ListItem(headlineContent = { Text("下载") }, leadingContent = { Icon(Icons.Rounded.Download, contentDescription = null) }, modifier = Modifier.clickable { scope.launch { val file = viewModel.downloadFile(entry.path); pendingDownload = file; createDoc.launch(file.name) }; actionEntry = null })
@@ -1901,12 +1979,82 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
         }
     }
     deleteEntry?.let { entry -> ConfirmDialog("删除 ${entry.name}", "确定删除 ${workspaceAbsPath(entry.path)}？", onDismiss = { deleteEntry = null }, onConfirm = { scope.launch { viewModel.deleteFile(entry.path); deleteEntry = null; loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) } }) }
+    largePreviewEntry?.let { entry ->
+        LargeFilePreviewDialog(
+            entry = entry,
+            onDismiss = { largePreviewEntry = null },
+            onConfirm = { largePreviewEntry = null; beginPreviewDownload(entry) }
+        )
+    }
+    previewDownload?.let { progress ->
+        PreviewDownloadDialog(progress = progress, onCancel = { previewJob?.cancel(); previewJob = null; previewDownload = null })
+    }
 }
 
 private suspend fun loadFiles(viewModel: AppViewModel, path: String, setLoading: (Boolean) -> Unit, setEntries: (List<FileEntry>) -> Unit, setError: (String?) -> Unit) {
     setLoading(true); setError(null)
     runCatching { viewModel.listFiles(path) }.onSuccess { setEntries(it) }.onFailure { setError(it.message) }
     setLoading(false)
+}
+
+private data class PreviewDownloadState(val entry: FileEntry, val bytesRead: Long, val totalBytes: Long)
+
+@Composable
+private fun LargeFilePreviewDialog(entry: FileEntry, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { Button(onClick = onConfirm) { Text("继续预览") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        title = { Text("预览大文件？") },
+        text = { Text("${entry.name} 大小为 ${formatBytes(entry.size)}。预览需要先下载到应用缓存，可能消耗流量与时间。") }
+    )
+}
+
+@Composable
+private fun PreviewDownloadDialog(progress: PreviewDownloadState, onCancel: () -> Unit) {
+    val total = progress.totalBytes
+    val fraction = if (total > 0) (progress.bytesRead.toFloat() / total.toFloat()).coerceIn(0f, 1f) else null
+    AlertDialog(
+        onDismissRequest = {},
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onCancel) { Text("取消下载") } },
+        title = { Text("正在准备预览") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(progress.entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (fraction != null) LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth()) else LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(
+                    if (total > 0) "${formatBytes(progress.bytesRead)} / ${formatBytes(total)}" else "已下载 ${formatBytes(progress.bytesRead)}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp
+                )
+            }
+        }
+    )
+}
+
+private fun Context.openCachedPreview(file: CachedPreviewFile, onError: (String) -> Unit) {
+    val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file.file)
+    val mimeType = previewMimeType(file.name, file.mimeType)
+    val intent = Intent(Intent.ACTION_VIEW)
+        .setDataAndType(uri, mimeType)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    runCatching { startActivity(Intent.createChooser(intent, "预览 ${file.name}")) }
+        .onFailure { e ->
+            val message = if (e is ActivityNotFoundException) "没有可打开 ${file.name} 的应用" else (e.message ?: "无法打开预览")
+            onError(message)
+        }
+}
+
+private fun previewMimeType(name: String, serverMimeType: String): String {
+    val clean = serverMimeType.substringBefore(';').trim().lowercase()
+    if (clean.isNotBlank() && clean != "application/octet-stream" && clean != "binary/octet-stream") return clean
+    val ext = name.substringAfterLast('.', "").lowercase()
+    return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: when (ext) {
+        "md", "markdown" -> "text/markdown"
+        "log", "txt", "csv", "json", "xml", "yaml", "yml", "kt", "java", "js", "ts", "py", "sh" -> "text/plain"
+        else -> "application/octet-stream"
+    }
 }
 
 @Composable
