@@ -116,3 +116,5 @@ Before handing off, run at least:
 ```
 
 and report the APK path if the build succeeds.
+
+if edit is finished make a git commit after test.
