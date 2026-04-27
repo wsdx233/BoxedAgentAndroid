@@ -41,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -454,6 +455,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     val lastMessage = state.activeMessages.lastOrNull()
     val latestProgressMessage = state.activeMessages.lastOrNull { it.role == "tool" || (it.role == "assistant" && it.thinking?.isNotBlank() == true) }
     val latestProgressMessageId = latestProgressMessage?.id
+    val latestProgressArgsKey = latestProgressMessage?.toolArgs?.toString()?.let { "${it.length}:${it.hashCode()}" }
 
     LaunchedEffect(state.composerInsert?.id) {
         val insert = state.composerInsert ?: return@LaunchedEffect
@@ -473,13 +475,25 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         latestProgressMessageId,
         latestProgressMessage?.thinking?.length,
         latestProgressMessage?.toolResult?.length,
+        latestProgressArgsKey,
         latestProgressMessage?.toolStatus,
         state.activeTurn
     ) {
         if (state.activeMessages.isNotEmpty() || state.activeTurn) {
-            withFrameNanos { }
-            val total = listState.layoutInfo.totalItemsCount
-            if (total > 0) listState.scrollToItem(total - 1)
+            repeat(8) {
+                withFrameNanos { }
+                val total = listState.layoutInfo.totalItemsCount
+                if (total > 0) listState.scrollToItem(total - 1)
+            }
+        }
+    }
+    LaunchedEffect(latestProgressMessageId, state.activeTurn) {
+        if (latestProgressMessageId != null && state.activeTurn) {
+            while (true) {
+                delay(250)
+                val total = listState.layoutInfo.totalItemsCount
+                if (total > 0) listState.scrollToItem(total - 1)
+            }
         }
     }
     LaunchedEffect(listState) {
@@ -1018,7 +1032,7 @@ private fun MessageBubble(message: ChatMessage, autoOpenProgress: Boolean, onFor
         }
         "assistant" -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             val hasThinking = message.thinking?.isNotBlank() == true
-            message.thinking?.takeIf { it.isNotBlank() }?.let { ExpandableBlock("思考过程", it, autoOpen = autoOpenProgress) }
+            message.thinking?.takeIf { it.isNotBlank() }?.let { ExpandableBlock("思考过程", it, autoOpen = autoOpenProgress, stateKey = message.id) }
             if (message.text.isNotBlank()) MarkdownishText(message.text) else if (!hasThinking) Spacer(Modifier.height(1.dp))
             AttachmentGallery(message.attachments)
             if (message.text.isNotBlank()) AssistantActions(message.text, onFork, onShowDialog)
@@ -1135,8 +1149,8 @@ private fun ToolMessageCard(message: ChatMessage, autoOpen: Boolean) {
         "error" -> MaterialTheme.colorScheme.error.copy(alpha = .55f)
         else -> MaterialTheme.colorScheme.outlineVariant
     }
-    var open by remember(message.id) { mutableStateOf(autoOpen || status == "running") }
-    LaunchedEffect(autoOpen, status, message.id) { open = autoOpen || status == "running" }
+    var open by rememberSaveable(message.id) { mutableStateOf(autoOpen || status == "running") }
+    LaunchedEffect(autoOpen, status, message.id) { if (autoOpen || status == "running") open = true }
     OutlinedCard(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1440,7 +1454,7 @@ private fun ToolPreview(message: ChatMessage) {
 private fun ToolPreviewHeader(title: String, path: String?, extra: String? = null) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
-        ToolPathPill(path)
+        path?.let { ToolPathPill(it) }
         extra?.takeIf { it.isNotBlank() }?.let { ToolMuted(it) }
     }
 }
@@ -1459,7 +1473,7 @@ private fun EmptyToolPreview(text: String) {
 
 @Composable
 private fun SmallToolDetails(title: String, content: @Composable () -> Unit) {
-    var open by remember { mutableStateOf(false) }
+    var open by rememberSaveable { mutableStateOf(false) }
     OutlinedCard(Modifier.fillMaxWidth(), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1482,7 +1496,7 @@ private fun DiffBlock(title: String, lines: List<DiffLine>, maxLines: Int = 240)
     val bg = MaterialTheme.colorScheme.surfaceContainerHighest
     val headerBg = MaterialTheme.colorScheme.surfaceContainerHigh
     val clipped = lines.size > maxLines
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     val visible = if (clipped && !expanded) lines.take(maxLines) else lines
     val text = lines.joinToString("\n") { line ->
         when (line.type) {
@@ -1705,7 +1719,7 @@ private fun CodeBlock(
     val lineClipped = maxCollapsedLines?.let { lines.size > it } == true
     val charClipped = text.length > collapsedChars
     val clipped = lineClipped || charClipped
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
     val collapsedText = remember(text, collapsedChars, maxCollapsedLines) {
         val lineLimited = maxCollapsedLines?.let { max -> if (lines.size > max) lines.take(max).joinToString("\n") else text } ?: text
         if (lineLimited.length > collapsedChars) lineLimited.take(collapsedChars) else lineLimited
@@ -1875,9 +1889,9 @@ private fun fallbackHighlightCode(code: String, language: String, dark: Boolean)
 }
 
 @Composable
-private fun ExpandableBlock(title: String, text: String, autoOpen: Boolean = false) {
-    var open by remember { mutableStateOf(autoOpen) }
-    LaunchedEffect(autoOpen, text) { open = autoOpen }
+private fun ExpandableBlock(title: String, text: String, autoOpen: Boolean = false, stateKey: String = title) {
+    var open by rememberSaveable(stateKey) { mutableStateOf(autoOpen) }
+    LaunchedEffect(autoOpen, stateKey) { if (autoOpen) open = true }
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp)) {
             Row(Modifier.fillMaxWidth().clickable { open = !open }, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -2481,7 +2495,8 @@ private fun FileHeaderRow() {
 private fun FileRow(entry: FileEntry, onOpen: () -> Unit, onAttach: () -> Unit, onMore: () -> Unit) {
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 42.dp).clickable { onOpen() }.padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(if (entry.type == "directory") Icons.Rounded.Folder else Icons.Rounded.Description, contentDescription = null, tint = if (entry.type == "directory") Color(0xFFD6A433) else MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+            if (entry.type == "directory") Icon(Icons.Rounded.Folder, contentDescription = null, tint = Color(0xFFD6A433), modifier = Modifier.size(20.dp))
+            else ToolFileIcon(fileIconForPath(entry.path))
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(entry.name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
