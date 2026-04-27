@@ -729,6 +729,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     val lastMessage = state.activeMessages.lastOrNull()
     val latestProgressMessage = state.activeMessages.lastOrNull { it.role == "tool" || (it.role == "assistant" && it.thinking?.isNotBlank() == true) }
     val latestProgressMessageId = latestProgressMessage?.id
+    val autoOpenProgressMessageId = latestProgressMessageId.takeIf { state.activeTurn }
     val streamingAssistantMessageId = if (state.activeTurn) state.activeMessages.lastOrNull { it.role == "assistant" }?.id else null
     val latestProgressArgsKey = latestProgressMessage?.toolArgs?.toString()?.let { "${it.length}:${it.hashCode()}" }
 
@@ -830,7 +831,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 items(state.activeMessages, key = { it.id }) { msg ->
                     MessageBubble(
                         message = msg,
-                        autoOpenProgress = msg.id == latestProgressMessageId,
+                        autoOpenProgress = msg.id == autoOpenProgressMessageId,
                         streaming = msg.id == streamingAssistantMessageId,
                         onFork = { forkDialogSession = session },
                         onShowDialog = { dialogMessage = msg.text.ifBlank { msg.toolResult.orEmpty() } }
