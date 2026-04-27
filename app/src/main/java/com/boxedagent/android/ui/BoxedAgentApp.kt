@@ -1123,119 +1123,387 @@ private fun inlineMarkdown(text: String): AnnotatedString = buildAnnotatedString
     append(text.substring(last))
 }
 
+private enum class ToolKind { Read, Edit, Write, Bash, Ls, Grep, Find, Unknown }
+
 @Composable
 private fun ToolMessageCard(message: ChatMessage, autoOpen: Boolean) {
     val status = message.toolStatus ?: "pending"
+    val kind = toolKindForName(message.toolName)
+    val accent = toolKindAccent(kind)
+    val border = when (status) {
+        "running" -> accent.copy(alpha = .50f)
+        "error" -> MaterialTheme.colorScheme.error.copy(alpha = .55f)
+        else -> MaterialTheme.colorScheme.outlineVariant
+    }
     var open by remember(message.id) { mutableStateOf(autoOpen || status == "running") }
     LaunchedEffect(autoOpen, status, message.id) { open = autoOpen || status == "running" }
-    ElevatedCard(Modifier.fillMaxWidth(), colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    OutlinedCard(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = androidx.compose.foundation.BorderStroke(1.dp, border)
+    ) {
+        Column(Modifier.fillMaxWidth()) {
             Row(
-                Modifier.fillMaxWidth().clickable { open = !open },
+                Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 12.dp, vertical = 11.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                horizontalArrangement = Arrangement.spacedBy(9.dp)
             ) {
-                ToolStatusIcon(status)
-                Text(message.toolName ?: "tool", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                ToolKindIcon(kind, status)
                 Text(
-                    toolOverview(message),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp,
+                    toolLabel(kind, message.toolName),
+                    fontWeight = FontWeight.Black,
+                    fontSize = 13.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.widthIn(max = 92.dp)
                 )
-                StatusChip(status)
+                ToolOverview(message, modifier = Modifier.weight(1f))
+                ToolStatusBadge(status)
                 Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
             }
-            if (open) ToolPreview(message)
+            if (open) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .72f))
+                ToolPreview(message)
+            }
         }
     }
 }
 
 @Composable
-private fun ToolStatusIcon(status: String) {
-    when (status) {
-        "running" -> CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
-        "error" -> Icon(Icons.Rounded.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
-        "done" -> Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-        else -> Icon(Icons.Rounded.Build, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+private fun ToolKindIcon(kind: ToolKind, status: String) {
+    val accent = toolKindAccent(kind)
+    Surface(shape = RoundedCornerShape(9.dp), color = accent.copy(alpha = .13f), contentColor = accent, modifier = Modifier.size(26.dp)) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            if (status == "running") CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = accent)
+            else Icon(toolIcon(kind), contentDescription = null, modifier = Modifier.size(16.dp))
+        }
     }
 }
 
 @Composable
-private fun ToolPreview(message: ChatMessage) {
-    val name = message.toolName.orEmpty().lowercase()
+private fun toolKindAccent(kind: ToolKind): Color = when (kind) {
+    ToolKind.Read -> Color(0xFFA5D6FF)
+    ToolKind.Edit -> Color(0xFF93C5FD)
+    ToolKind.Write -> Color(0xFF7EE787)
+    ToolKind.Bash -> Color(0xFFD0BCFF)
+    ToolKind.Ls, ToolKind.Grep, ToolKind.Find -> Color(0xFFFFD8E4)
+    ToolKind.Unknown -> MaterialTheme.colorScheme.onSurfaceVariant
+}
+
+private fun toolIcon(kind: ToolKind): ImageVector = when (kind) {
+    ToolKind.Read -> Icons.Rounded.Visibility
+    ToolKind.Edit -> Icons.Rounded.Edit
+    ToolKind.Write -> Icons.Rounded.NoteAdd
+    ToolKind.Bash -> Icons.Rounded.Terminal
+    ToolKind.Ls -> Icons.Rounded.Folder
+    ToolKind.Grep -> Icons.Rounded.Search
+    ToolKind.Find -> Icons.Rounded.FindInPage
+    ToolKind.Unknown -> Icons.Rounded.Build
+}
+
+private fun toolLabel(kind: ToolKind, name: String?): String = when (kind) {
+    ToolKind.Read -> "读取文件"
+    ToolKind.Edit -> "编辑文件"
+    ToolKind.Write -> "写入文件"
+    ToolKind.Bash -> "执行命令"
+    ToolKind.Ls -> "列出目录"
+    ToolKind.Grep -> "搜索文本"
+    ToolKind.Find -> "查找文件"
+    ToolKind.Unknown -> name?.takeIf { it.isNotBlank() } ?: "tool"
+}
+
+private fun toolKindForName(name: String?): ToolKind {
+    val raw = name.orEmpty().trim().lowercase()
+    val last = raw.split(Regex("[./:]")).filter { it.isNotBlank() }.lastOrNull() ?: raw
+    val keys = listOf(raw, last).map { it.replace(Regex("[\\s_-]"), "") }
+    fun has(vararg values: String): Boolean = keys.any { key -> values.any { it == key } }
+    return when {
+        has("read", "readfile", "fileread", "view") -> ToolKind.Read
+        has("edit", "editfile", "fileedit", "replace", "strreplace") -> ToolKind.Edit
+        has("write", "writefile", "filewrite", "create", "createfile") -> ToolKind.Write
+        has("bash", "shell", "terminal", "runcommand", "exec", "execute") -> ToolKind.Bash
+        has("ls", "list", "listdir", "listdirectory") -> ToolKind.Ls
+        has("grep", "rg", "ripgrep", "search", "searchtext") -> ToolKind.Grep
+        has("find", "findfile", "findfiles", "glob") -> ToolKind.Find
+        else -> ToolKind.Unknown
+    }
+}
+
+@Composable
+private fun ToolStatusBadge(status: String) {
+    val (color, label) = when (status) {
+        "running" -> Color(0xFF60A5FA) to "运行中"
+        "error" -> MaterialTheme.colorScheme.error to "失败"
+        "done" -> Color(0xFF16A34A) to "完成"
+        else -> MaterialTheme.colorScheme.onSurfaceVariant to "准备"
+    }
+    Surface(shape = RoundedCornerShape(999.dp), color = color.copy(alpha = .10f), contentColor = color) {
+        Row(Modifier.padding(horizontal = 7.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Box(Modifier.size(8.dp).clip(CircleShape).background(color))
+            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun ToolOverview(message: ChatMessage, modifier: Modifier = Modifier) {
+    val kind = toolKindForName(message.toolName)
     val args = message.toolArgs.toolObjectOrNull()
     val result = message.toolResult.orEmpty()
     val path = args.toolPath()
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        when (name) {
-            "write" -> {
-                val content = args.firstString("content", "text", "value", "data")
-                if (!content.isNullOrBlank()) DiffBlock("写入 diff", buildWriteDiff(content, path))
-                else result.takeIf { it.isNotBlank() }?.let { CodeBlock("输出", it) }
-                if (result.isNotBlank() && content != null) SmallToolDetails("工具结果") { CodeBlock("输出", result) }
+    Row(modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        when (kind) {
+            ToolKind.Edit -> {
+                val edits = editDiffInputs(args, path)
+                val stats = editChangeStats(edits)
+                val paths = uniqueStrings(listOf(path) + edits.map { it.path })
+                if (paths.isNotEmpty()) ToolMuted("${paths.size} files")
+                if (edits.isNotEmpty()) ToolChangeStats(stats.added, stats.removed) else ToolMuted(previewText(result) ?: "等待 diff")
+                paths.firstOrNull()?.let { ToolFileRef(it) }
+                if (paths.size > 1) ToolMuted("+${paths.size - 1}")
+                if (paths.isEmpty() && edits.isEmpty() && result.isBlank()) ToolMuted("点击查看详情")
             }
-            "edit" -> {
+            ToolKind.Read -> {
+                if (path != null) ToolFileRef(path) else ToolMuted("file")
+                readLineSummary(args, result)?.takeIf { it.isNotBlank() }?.let { ToolMuted(it) }
+            }
+            ToolKind.Write -> {
+                val content = args.firstString("content", "newText", "new_text", "replacement", "text", "value", "data")
+                val added = content?.let { splitTextLines(it).size } ?: lineCount(result)
+                if (added > 0) ToolChangeStats(added, 0)
+                if (path != null) ToolFileRef(path) else ToolMuted(previewText(result) ?: "file")
+            }
+            ToolKind.Bash -> {
+                val command = bashCommand(message.toolArgs)
+                if (command != null) ToolInlineCode("$ ${previewText(command, 180)}") else ToolMuted(previewText(result) ?: "shell")
+            }
+            ToolKind.Ls -> if (path != null) ToolFileRef(path) else ToolMuted("当前目录")
+            ToolKind.Grep, ToolKind.Find -> {
+                args.firstString("pattern", "query", "regex", "name", "value")?.let { ToolInlineCode(previewText(it, 80) ?: it) }
+                path?.let { ToolFileRef(it) }
+                if (path == null && args.firstString("pattern", "query", "regex", "name", "value") == null) ToolMuted(previewText(message.toolArgs?.let { pretty(it) } ?: result) ?: "点击查看详情")
+            }
+            ToolKind.Unknown -> ToolMuted(compactText(path?.let { fileNameFromPath(it) }, previewText(message.toolArgs?.let { pretty(it) }), previewText(result)))
+        }
+    }
+}
+
+@Composable
+private fun ToolMuted(text: String) {
+    Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+}
+
+@Composable
+private fun ToolInlineCode(text: String) {
+    Surface(shape = RoundedCornerShape(7.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .10f), contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+        Text(text, fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 260.dp).padding(horizontal = 6.dp, vertical = 3.dp))
+    }
+}
+
+@Composable
+private fun ToolChangeStats(added: Int, removed: Int) {
+    val add = added.coerceAtLeast(0)
+    val del = removed.coerceAtLeast(0)
+    if (add == 0 && del == 0) { ToolMuted("无行变更"); return }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        if (add > 0) Text("+$add", color = Color(0xFF7EE787), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
+        if (del > 0) Text("-$del", color = Color(0xFFFF7B72), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
+    }
+}
+
+private data class ToolFileBadgeData(val label: String, val bg: Color, val fg: Color)
+
+@Composable
+private fun ToolFileRef(path: String) {
+    val name = fileNameFromPath(path)
+    Row(Modifier.widthIn(max = 190.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        ToolLanguageBadge(fileBadgeForPath(path))
+        Text(name, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .88f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun ToolPathPill(path: String?, fallback: String = "file") {
+    val label = path?.let { fileNameFromPath(it) } ?: fallback
+    Surface(shape = RoundedCornerShape(9.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .10f), contentColor = MaterialTheme.colorScheme.onSurface) {
+        Row(Modifier.widthIn(max = 220.dp).padding(horizontal = 7.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            ToolLanguageBadge(fileBadgeForPath(path ?: label))
+            Text(label, fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun ToolLanguageBadge(badge: ToolFileBadgeData) {
+    Surface(shape = RoundedCornerShape(5.dp), color = badge.bg, contentColor = badge.fg, modifier = Modifier.height(18.dp).widthIn(min = 22.dp)) {
+        Box(Modifier.padding(horizontal = 4.dp), contentAlignment = Alignment.Center) {
+            Text(badge.label, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black, fontSize = 8.sp, maxLines = 1)
+        }
+    }
+}
+
+private fun fileBadgeForPath(path: String): ToolFileBadgeData {
+    val name = fileNameFromPath(path).lowercase()
+    specialFileBadge(name)?.let { return it }
+    return when (fileExtension(name)) {
+        "js", "mjs", "cjs" -> badge("JS", Color(0xFFF7DF1E), Color(0xFF332900))
+        "jsx" -> badge("JSX", Color(0xFF61DAFB), Color(0xFF082F49))
+        "ts", "mts", "cts" -> badge("TS", Color(0xFF3178C6), Color.White)
+        "tsx" -> badge("TSX", Color(0xFF61DAFB), Color(0xFF082F49))
+        "py", "pyw", "ipynb" -> badge("PY", Color(0xFF3776AB), Color.White)
+        "kt", "kts" -> badge(if (name.endsWith(".kts")) "KTS" else "KT", Color(0xFF7F52FF), Color.White)
+        "java" -> badge("JAVA", Color(0xFFE76F00), Color(0xFFFFF7ED))
+        "go" -> badge("GO", Color(0xFF00ADD8), Color(0xFF042F3B))
+        "rs" -> badge("RS", Color(0xFFDEA584), Color(0xFF3B1D0F))
+        "rb" -> badge("RB", Color(0xFFCC342D), Color(0xFFFFF5F5))
+        "php" -> badge("PHP", Color(0xFF777BB4), Color.White)
+        "cs" -> badge("C#", Color(0xFF68217A), Color.White)
+        "swift" -> badge("SW", Color(0xFFF05138), Color.White)
+        "dart" -> badge("DART", Color(0xFF0175C2), Color.White)
+        "c", "h" -> badge(fileExtension(name).uppercase(), Color(0xFF555555), Color(0xFFF8FAFC))
+        "cc", "cpp", "cxx", "hpp", "hh" -> badge("C++", Color(0xFF00599C), Color.White)
+        "html", "htm" -> badge("HTML", Color(0xFFE34F26), Color(0xFFFFF7ED))
+        "css", "scss", "sass", "less" -> badge("CSS", Color(0xFF1572B6), Color(0xFFE0F2FE))
+        "vue" -> badge("VUE", Color(0xFF42B883), Color(0xFF06281B))
+        "json", "jsonc" -> badge("JSON", Color(0xFFF97316), Color(0xFFFFF7ED))
+        "yml", "yaml" -> badge("YAML", Color(0xFFCB171E), Color.White)
+        "toml" -> badge("TOML", Color(0xFF9C4221), Color(0xFFFFF7ED))
+        "xml" -> badge("XML", Color(0xFFFB923C), Color(0xFF431407))
+        "md", "mdx", "markdown" -> badge("MD", Color(0xFF64748B), Color(0xFFF8FAFC))
+        "sql", "sqlite", "sqlite3", "db" -> badge("SQL", Color(0xFF336791), Color(0xFFE0F2FE))
+        "sh", "bash" -> badge("SH", Color(0xFF4ADE80), Color(0xFF052E16))
+        "zsh" -> badge("ZSH", Color(0xFF4ADE80), Color(0xFF052E16))
+        "fish" -> badge("FSH", Color(0xFF4ADE80), Color(0xFF052E16))
+        "txt" -> badge("TXT", Color(0xFF475569), Color(0xFFE2E8F0))
+        "log" -> badge("LOG", Color(0xFF475569), Color(0xFFE2E8F0))
+        else -> fileExtension(name).takeIf { it.isNotBlank() }?.let { badge(it.take(4).uppercase(), Color(0xFF475569), Color(0xFFE2E8F0)) } ?: badge("FILE", Color(0xFF475569), Color(0xFFE2E8F0))
+    }
+}
+
+private fun specialFileBadge(name: String): ToolFileBadgeData? = when {
+    name == "dockerfile" || name.endsWith(".dockerfile") || name in setOf("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml") -> badge("DK", Color(0xFF2496ED), Color(0xFFEFF6FF))
+    name == "makefile" -> badge("MK", Color(0xFF064E3B), Color(0xFFD1FAE5))
+    name == "cmakelists.txt" -> badge("CMake", Color(0xFF064E3B), Color(0xFFD1FAE5))
+    name.startsWith(".env") -> badge("ENV", Color(0xFFF59E0B), Color(0xFF1F1300))
+    name.startsWith(".git") -> badge("GIT", Color(0xFFF05032), Color(0xFFFFF7ED))
+    name in setOf("package.json", "package-lock.json", "pnpm-lock.yaml", "pnpm-lock.yml", "yarn.lock") -> badge("NPM", Color(0xFF3C873A), Color(0xFFF0FDF4))
+    name.startsWith("tsconfig") && name.endsWith(".json") -> badge("TS", Color(0xFF3178C6), Color.White)
+    name in setOf("go.mod", "go.sum") -> badge("GO", Color(0xFF00ADD8), Color(0xFF042F3B))
+    name in setOf("cargo.toml", "cargo.lock", "rust-toolchain") -> badge("RS", Color(0xFFDEA584), Color(0xFF3B1D0F))
+    name in setOf("requirements.txt", "pyproject.toml", "poetry.lock", "pdm.lock") -> badge("PY", Color(0xFF3776AB), Color.White)
+    name == "pom.xml" -> badge("MVN", Color(0xFFE76F00), Color(0xFFFFF7ED))
+    name.endsWith(".gradle") || name.endsWith(".gradle.kts") || name == "gradlew" -> badge("GRAD", Color(0xFF02303A), Color(0xFFA5F3FC))
+    else -> null
+}
+
+private fun badge(label: String, bg: Color, fg: Color): ToolFileBadgeData = ToolFileBadgeData(label, bg, fg)
+
+@Composable
+private fun ToolPreview(message: ChatMessage) {
+    val kind = toolKindForName(message.toolName)
+    val args = message.toolArgs.toolObjectOrNull()
+    val result = message.toolResult.orEmpty()
+    val path = args.toolPath()
+    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        when (kind) {
+            ToolKind.Write -> {
+                val content = args.firstString("content", "newText", "new_text", "replacement", "text", "value", "data")
+                ToolPreviewHeader("写入 diff", path)
+                if (!content.isNullOrBlank()) DiffBlock("Unified diff", buildWriteDiff(content, path))
+                else if (result.isNotBlank()) ToolCodeBlock("输出预览", result)
+                else EmptyToolPreview("没有可显示的写入内容")
+                if (result.isNotBlank() && content != null) SmallToolDetails("工具结果") { ToolCodeBlock("输出预览", result, maxLines = 10) }
+            }
+            ToolKind.Edit -> {
+                val edits = editDiffInputs(args, path)
                 val diffs = buildEditDiffs(args, path)
-                if (diffs.isNotEmpty()) DiffBlock("编辑 diff", diffs)
-                else result.takeIf { it.isNotBlank() }?.let { CodeBlock("输出", it) }
-                if (message.toolArgs != null) SmallToolDetails("参数") { CodeBlock("json", pretty(message.toolArgs)) }
+                ToolPreviewHeader("编辑 diff", path ?: edits.firstOrNull()?.path, if (edits.size > 1) "${edits.size} blocks" else null)
+                if (diffs.isNotEmpty()) DiffBlock("Unified diff", diffs)
+                else if (result.isNotBlank()) ToolCodeBlock("输出预览", result)
+                else EmptyToolPreview("没有可显示的编辑内容")
+                if (result.isNotBlank() && diffs.isNotEmpty()) SmallToolDetails("工具结果") { ToolCodeBlock("输出预览", result, maxLines = 10) }
+                else if (message.toolArgs != null && diffs.isEmpty()) SmallToolDetails("参数") { ToolCodeBlock("json", pretty(message.toolArgs), maxLines = 10) }
             }
-            "read" -> {
-                val limit = args?.stringValue("limit")?.let { " · limit $it" }.orEmpty()
-                Text(compactText("读取", path, limit), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+            ToolKind.Read -> {
                 val display = result.ifBlank { message.toolArgs?.let { pretty(it) }.orEmpty() }
-                if (display.isNotBlank()) CodeBlock(languageForPath(path).ifBlank { "text" }, display)
+                ToolPreviewHeader("读取", path, readLineSummary(args, result))
+                if (display.isNotBlank()) ToolCodeBlock(languageForPath(path).ifBlank { "text" }, display)
+                else EmptyToolPreview("没有可显示的读取结果")
             }
-            "bash", "shell" -> {
-                bashCommand(message.toolArgs)?.let { CodeBlock("$ command", it) }
-                result.takeIf { it.isNotBlank() }?.let { CodeBlock("terminal", it) }
+            ToolKind.Bash -> {
+                val command = bashCommand(message.toolArgs)
+                if (!command.isNullOrBlank()) {
+                    ToolPreviewHeader("模型执行的命令", null)
+                    ToolCodeBlock("$ command", command, maxLines = 24)
+                }
+                if (result.isNotBlank()) {
+                    ToolPreviewHeader("输出预览", null)
+                    ToolCodeBlock("terminal", result)
+                }
+                if (command.isNullOrBlank() && result.isBlank()) EmptyToolPreview("命令尚未产生输出")
             }
-            else -> {
-                message.toolArgs?.let { CodeBlock("参数", pretty(it)) }
-                result.takeIf { it.isNotBlank() }?.let { CodeBlock("输出", it) }
+            ToolKind.Ls, ToolKind.Grep, ToolKind.Find, ToolKind.Unknown -> {
+                if (message.toolArgs != null) {
+                    ToolPreviewHeader("参数", path)
+                    ToolCodeBlock("json", pretty(message.toolArgs), maxLines = 10)
+                }
+                if (result.isNotBlank()) {
+                    ToolPreviewHeader("输出预览", path)
+                    ToolCodeBlock("输出", result)
+                }
+                if (message.toolArgs == null && result.isBlank()) EmptyToolPreview("没有可显示的工具内容")
             }
         }
+    }
+}
+
+@Composable
+private fun ToolPreviewHeader(title: String, path: String?, extra: String? = null) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
+        ToolPathPill(path)
+        extra?.takeIf { it.isNotBlank() }?.let { ToolMuted(it) }
+    }
+}
+
+@Composable
+private fun ToolCodeBlock(title: String, text: String, maxLines: Int = 18) {
+    CodeBlock(title, text, maxCollapsedLines = maxLines, forceDark = true)
+}
+
+@Composable
+private fun EmptyToolPreview(text: String) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = .55f)) {
+        Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(12.dp))
     }
 }
 
 @Composable
 private fun SmallToolDetails(title: String, content: @Composable () -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        TextButton(onClick = { open = !open }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
-            Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(16.dp))
-            Text(title, fontSize = 12.sp)
+    OutlinedCard(Modifier.fillMaxWidth(), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(if (open) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(title, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+            }
+            if (open) Box(Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) { content() }
         }
-        if (open) content()
     }
 }
 
-private fun toolOverview(message: ChatMessage): String {
-    val name = message.toolName.orEmpty().lowercase()
-    val args = message.toolArgs.toolObjectOrNull()
-    val result = message.toolResult.orEmpty()
-    val path = args.toolPath()
-    return when (name) {
-        "write" -> compactText("写入", path, previewText(args.firstString("content", "text", "value") ?: result))
-        "edit" -> compactText("编辑", path, previewText(editPreview(args) ?: result))
-        "read" -> compactText("读取", path, args?.stringValue("limit")?.let { "limit $it" } ?: previewText(result))
-        "bash", "shell" -> bashCommand(message.toolArgs)?.let { "$ ${previewText(it, 180)}" } ?: compactText("bash", previewText(result))
-        else -> compactText(path, previewText(message.toolArgs?.let { pretty(it) }), previewText(result))
-    }
-}
-
+private data class EditDiffInput(val oldText: String, val newText: String, val path: String?)
+private data class ChangeStats(val added: Int, val removed: Int)
 private data class DiffLine(val type: DiffLineType, val text: String)
 private enum class DiffLineType { Add, Del, Meta, Ctx }
 
 @Composable
 private fun DiffBlock(title: String, lines: List<DiffLine>, maxLines: Int = 240) {
     val clipboard = LocalClipboardManager.current
-    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val bg = if (dark) Color(0xFF0F0D13) else Color(0xFFF8FAFC)
-    val headerBg = if (dark) Color(0xFF191820) else Color(0xFFE7E9EE)
+    val bg = Color(0xFF0F0D13)
+    val headerBg = Color(0xFF191820)
     val clipped = lines.size > maxLines
     var expanded by remember { mutableStateOf(false) }
     val visible = if (clipped && !expanded) lines.take(maxLines) else lines
@@ -1253,7 +1521,7 @@ private fun DiffBlock(title: String, lines: List<DiffLine>, maxLines: Int = 240)
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(Modifier.fillMaxWidth().background(headerBg).padding(horizontal = 10.dp, vertical = 5.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(title, style = MaterialTheme.typography.labelSmall, color = Color(0xFFC9C3D4), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (clipped) {
                 TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
                     Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(13.dp))
@@ -1273,29 +1541,39 @@ private fun DiffBlock(title: String, lines: List<DiffLine>, maxLines: Int = 240)
 
 @Composable
 private fun DiffLineRow(line: DiffLine) {
-    val colors = MaterialTheme.colorScheme
     val bg = when (line.type) {
-        DiffLineType.Add -> Color(0xFFDCFCE7).copy(alpha = .75f)
-        DiffLineType.Del -> Color(0xFFFEE2E2).copy(alpha = .82f)
-        DiffLineType.Meta -> colors.primaryContainer.copy(alpha = .45f)
+        DiffLineType.Add -> Color(0x263FB950)
+        DiffLineType.Del -> Color(0x24F85149)
+        DiffLineType.Meta -> Color(0x1F58A6FF)
         DiffLineType.Ctx -> Color.Transparent
     }
-    val fg = when (line.type) {
-        DiffLineType.Add -> Color(0xFF166534)
-        DiffLineType.Del -> Color(0xFF991B1B)
-        DiffLineType.Meta -> colors.primary
-        DiffLineType.Ctx -> colors.onSurface
+    val stripe = when (line.type) {
+        DiffLineType.Add -> Color(0xFF3FB950)
+        DiffLineType.Del -> Color(0xFFF85149)
+        else -> Color.Transparent
+    }
+    val signColor = when (line.type) {
+        DiffLineType.Add -> Color(0xFF7EE787)
+        DiffLineType.Del -> Color(0xFFFF7B72)
+        DiffLineType.Meta -> Color(0xFFA5D6FF)
+        DiffLineType.Ctx -> Color(0xFF8B949E)
+    }
+    val textColor = when (line.type) {
+        DiffLineType.Meta -> Color(0xFFA5D6FF)
+        else -> Color(0xFFD0D7DE)
     }
     Row(Modifier.fillMaxWidth().background(bg), verticalAlignment = Alignment.Top) {
+        Box(Modifier.width(3.dp).height(20.dp).background(stripe))
         Text(
             when (line.type) { DiffLineType.Add -> "+"; DiffLineType.Del -> "-"; DiffLineType.Meta -> ""; DiffLineType.Ctx -> " " },
-            color = fg,
+            color = signColor,
             fontFamily = FontFamily.Monospace,
             fontSize = 12.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier.width(28.dp).padding(top = 2.dp),
             maxLines = 1
         )
-        Text(line.text.ifEmpty { " " }, color = fg, fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.weight(1f).padding(vertical = 2.dp, horizontal = 4.dp))
+        Text(line.text.ifEmpty { " " }, color = textColor, fontFamily = FontFamily.Monospace, fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.weight(1f).padding(vertical = 2.dp, horizontal = 4.dp))
     }
 }
 
@@ -1308,21 +1586,50 @@ private fun buildWriteDiff(content: String, filePath: String?): List<DiffLine> {
 }
 
 private fun buildEditDiffs(args: JsonObject?, filePath: String?): List<DiffLine> {
+    val edits = editDiffInputs(args, filePath)
+    return edits.flatMapIndexed { index, edit ->
+        val lines = if (edit.oldText.isNotBlank()) buildUnifiedDiff(edit.oldText, edit.newText, edit.path ?: filePath) else buildWriteDiff(edit.newText, edit.path ?: filePath)
+        if (index == 0) lines else listOf(DiffLine(DiffLineType.Meta, "")) + lines
+    }
+}
+
+private fun editDiffInputs(args: JsonObject?, fallbackPath: String?): List<EditDiffInput> {
     if (args == null) return emptyList()
-    val oldText = args.firstString("oldText", "old_text", "old", "original")
-    val newText = args.firstString("newText", "new_text", "replacement", "content", "text", "value")
-    if (oldText != null && newText != null) return buildUnifiedDiff(oldText, newText, filePath)
-    val edits = args["edits"] as? JsonArray ?: return newText?.let { buildWriteDiff(it, filePath) }.orEmpty()
-    return edits.flatMapIndexed { index, element ->
-        val edit = element.toolObjectOrNull()
-        val old = edit.firstString("oldText", "old_text", "old", "original")
-        val new = edit.firstString("newText", "new_text", "replacement", "content", "text", "value")
-        when {
-            old != null && new != null -> listOf(DiffLine(DiffLineType.Meta, "# edit ${index + 1}")) + buildUnifiedDiff(old, new, filePath).drop(if (index == 0) 0 else 3)
-            new != null -> listOf(DiffLine(DiffLineType.Meta, "# edit ${index + 1}")) + buildWriteDiff(new, filePath).drop(if (index == 0) 0 else 2)
-            else -> emptyList()
+    val out = mutableListOf<EditDiffInput>()
+    fun push(obj: JsonObject?) {
+        if (obj == null) return
+        val oldText = obj.firstString("oldText", "old_text", "old", "original", "before").orEmpty()
+        val newText = obj.firstString("newText", "new_text", "replacement", "replace", "new", "after", "content", "text", "value").orEmpty()
+        val path = obj.toolPath() ?: fallbackPath
+        if (oldText.isNotBlank() || newText.isNotBlank()) out += EditDiffInput(oldText, newText, path)
+    }
+    listOf("edits", "changes", "replacements").forEach { key ->
+        (args[key] as? JsonArray)?.forEach { push(it.toolObjectOrNull()) }
+    }
+    push(args)
+    return out.distinctBy { Triple(it.oldText, it.newText, it.path) }
+}
+
+private fun editChangeStats(edits: List<EditDiffInput>): ChangeStats = edits.fold(ChangeStats(0, 0)) { acc, edit ->
+    val changed = changedLineCounts(edit.oldText, edit.newText)
+    ChangeStats(acc.added + changed.added, acc.removed + changed.removed)
+}
+
+private fun changedLineCounts(oldText: String, newText: String): ChangeStats {
+    if (oldText.isBlank() && newText.isBlank()) return ChangeStats(0, 0)
+    val oldLines = splitTextLines(oldText)
+    val newLines = splitTextLines(newText)
+    if (oldLines.isEmpty()) return ChangeStats(newLines.size, 0)
+    if (newLines.isEmpty()) return ChangeStats(0, oldLines.size)
+    if (oldLines.size * newLines.size > 90_000) return ChangeStats(newLines.size, oldLines.size)
+    val dp = Array(oldLines.size + 1) { IntArray(newLines.size + 1) }
+    for (i in oldLines.size - 1 downTo 0) {
+        for (j in newLines.size - 1 downTo 0) {
+            dp[i][j] = if (oldLines[i] == newLines[j]) dp[i + 1][j + 1] + 1 else max(dp[i + 1][j], dp[i][j + 1])
         }
     }
+    val common = dp[0][0]
+    return ChangeStats(newLines.size - common, oldLines.size - common)
 }
 
 private fun buildUnifiedDiff(oldText: String, newText: String, filePath: String?): List<DiffLine> {
@@ -1356,9 +1663,28 @@ private fun buildUnifiedDiff(oldText: String, newText: String, filePath: String?
 }
 
 private fun splitTextLines(text: String): List<String> = if (text.isEmpty()) emptyList() else text.replace("\r\n", "\n").split("\n")
+private fun lineCount(text: String): Int = if (text.isBlank()) 0 else splitTextLines(text).size
 private fun editPreview(args: JsonObject?): String? = args.firstString("newText", "new_text", "replacement", "content", "text", "value") ?: ((args?.get("edits") as? JsonArray)?.firstOrNull()?.toolObjectOrNull()).firstString("newText", "new_text", "replacement", "content", "text", "value")
-private fun JsonObject?.toolPath(): String? = this?.stringValue("path") ?: this?.stringValue("file") ?: this?.stringValue("filename")
+private fun JsonObject?.toolPath(): String? = this?.firstString("path", "file", "filename", "filePath", "file_path", "directory", "dir", "cwd")
 private fun JsonObject?.firstString(vararg keys: String): String? = keys.firstNotNullOfOrNull { this?.stringValue(it)?.takeIf(String::isNotBlank) }
+private fun uniqueStrings(values: List<String?>): List<String> = values.mapNotNull { it?.trim()?.takeIf(String::isNotBlank) }.distinct()
+private fun fileNameFromPath(path: String): String = path.replace('\\', '/').trimEnd('/').split('/').filter { it.isNotBlank() }.lastOrNull() ?: path.ifBlank { "file" }
+private fun fileExtension(name: String): String = fileNameFromPath(name).lowercase().substringAfterLast('.', missingDelimiterValue = "").takeIf { it != fileNameFromPath(name).lowercase() }.orEmpty()
+private fun readLineSummary(args: JsonObject?, result: String): String? {
+    val start = args.numericValue("offset", "start", "startLine", "start_line", "line", "from")
+    val limit = args.numericValue("limit", "lines", "lineCount", "line_count", "count")
+    return when {
+        start != null && limit != null -> "第 $start-${max(start, start + limit - 1)} 行"
+        start != null -> "第 $start 行起"
+        limit != null -> "前 $limit 行"
+        result.isNotBlank() -> lineCount(result).takeIf { it > 0 }?.let { if (it == 1) "第 1 行" else "第 1-$it 行" }
+        else -> null
+    }
+}
+private fun JsonObject?.numericValue(vararg keys: String): Int? = keys.firstNotNullOfOrNull { key ->
+    val raw = this?.stringValue(key)?.replace(",", "")?.trim()
+    raw?.toDoubleOrNull()?.takeIf { it.isFinite() }?.toInt()?.coerceAtLeast(1)
+}
 private fun compactText(vararg parts: String?): String = parts.mapNotNull { it?.trim()?.takeIf(String::isNotBlank) }.joinToString(" · ").ifBlank { "点击查看详情" }
 private fun previewText(value: String?, max: Int = 90): String? {
     val text = value?.replace(Regex("\\s+"), " ")?.trim().orEmpty()
@@ -1383,19 +1709,32 @@ private fun JsonObject.stringValue(key: String): String? = when (val value = thi
 }
 
 @Composable
-private fun CodeBlock(title: String, text: String, collapsedChars: Int = TOOL_CODE_COLLAPSED_CHARS) {
+private fun CodeBlock(
+    title: String,
+    text: String,
+    collapsedChars: Int = TOOL_CODE_COLLAPSED_CHARS,
+    maxCollapsedLines: Int? = null,
+    forceDark: Boolean = false
+) {
     val clipboard = LocalClipboardManager.current
-    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val bg = if (dark) Color(0xFF101014) else Color(0xFFF1F3F5)
+    val dark = forceDark || MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val bg = if (dark) Color(0xFF0F0D13) else Color(0xFFF1F3F5)
     val headerBg = if (dark) Color(0xFF191820) else Color(0xFFE7E9EE)
     val label = if (dark) Color(0xFFC9C3D4) else Color(0xFF4B5563)
-    val clipped = text.length > collapsedChars
+    val lines = remember(text) { text.replace("\r\n", "\n").split("\n") }
+    val lineClipped = maxCollapsedLines?.let { lines.size > it } == true
+    val charClipped = text.length > collapsedChars
+    val clipped = lineClipped || charClipped
     var expanded by remember { mutableStateOf(false) }
-    val displayText = if (clipped && !expanded) text.take(collapsedChars) else text
+    val collapsedText = remember(text, collapsedChars, maxCollapsedLines) {
+        val lineLimited = maxCollapsedLines?.let { max -> if (lines.size > max) lines.take(max).joinToString("\n") else text } ?: text
+        if (lineLimited.length > collapsedChars) lineLimited.take(collapsedChars) else lineLimited
+    }
+    val displayText = if (clipped && !expanded) collapsedText else text
     OutlinedCard(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.outlinedCardColors(containerColor = bg),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (dark) Color(0xFF2C2832) else MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(Modifier.fillMaxWidth().background(headerBg).padding(horizontal = 10.dp, vertical = 5.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(title, style = MaterialTheme.typography.labelSmall, color = label, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
@@ -1409,9 +1748,17 @@ private fun CodeBlock(title: String, text: String, collapsedChars: Int = TOOL_CO
         }
         SelectionContainer { Text(highlightCode(displayText, title, dark), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().background(bg).padding(10.dp), lineHeight = 18.sp) }
         if (clipped && !expanded) {
+            val hiddenLines = (lines.size - (maxCollapsedLines ?: lines.size)).coerceAtLeast(0)
+            val hiddenChars = (text.length - displayText.length).coerceAtLeast(0)
             Text(
-                "已隐藏 ${text.length - displayText.length} 个字符，点击“展开全部”查看完整结果。",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                buildString {
+                    append("… ")
+                    if (hiddenLines > 0) append("本地折叠 $hiddenLines 行，共 ${lines.size} 行")
+                    if (hiddenLines > 0 && hiddenChars > 0) append("；")
+                    if (hiddenChars > 0) append("已隐藏 $hiddenChars 个字符")
+                    append("。点击“展开全部”查看完整结果。")
+                },
+                color = if (dark) Color(0xFFC9C3D4) else MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
                 modifier = Modifier.fillMaxWidth().background(bg).padding(start = 10.dp, end = 10.dp, bottom = 8.dp)
             )
