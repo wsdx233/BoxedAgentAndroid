@@ -138,7 +138,7 @@ private val ZhStrings = AppStrings(
     settingsSubtitle = "服务器连接、外观与语言",
     close = "关闭",
     connectionTitle = "连接 BoxedAgent",
-    connectionDesc = "输入 BoxedAgent 后端地址与 BOXEDAGENT_TOKEN。模拟器访问宿主机默认使用 http://10.0.2.2:8080。",
+    connectionDesc = "输入服务器地址和 Token。",
     apiUrl = "API 地址",
     token = "Token（未启用认证可留空）",
     connect = "连接 / 登录",
@@ -177,7 +177,7 @@ private val EnStrings = AppStrings(
     settingsSubtitle = "Server connections, appearance and language",
     close = "Close",
     connectionTitle = "Connect to BoxedAgent",
-    connectionDesc = "Enter the BoxedAgent backend URL and BOXEDAGENT_TOKEN. Android emulator usually reaches the host at http://10.0.2.2:8080.",
+    connectionDesc = "Enter server URL and token.",
     apiUrl = "API URL",
     token = "Token (optional when auth is disabled)",
     connect = "Connect / Sign in",
@@ -212,6 +212,8 @@ private fun stringsFor(mode: AppLanguageMode): AppStrings = when (mode) {
     AppLanguageMode.En -> EnStrings
     AppLanguageMode.System -> if (Locale.getDefault().language.startsWith("zh")) ZhStrings else EnStrings
 }
+private val LocalAppStrings = staticCompositionLocalOf { ZhStrings }
+@Composable private fun localized(zh: String, en: String): String = if (LocalAppStrings.current === EnStrings) en else zh
 private const val PREVIEW_LARGE_FILE_THRESHOLD_BYTES: Long = 10L * 1024L * 1024L
 private const val TOOL_CODE_COLLAPSED_CHARS = 12_000
 private const val DEFAULT_CONNECTION_URL = "http://10.0.2.2:8080"
@@ -229,6 +231,13 @@ fun BoxedAgentApp(viewModel: AppViewModel) {
         viewModel.clearEvent(event.id)
     }
 
+    CompositionLocalProvider(LocalAppStrings provides strings) {
+        BoxedAgentAppContent(state, viewModel, snackbarHostState, strings)
+    }
+}
+
+@Composable
+private fun BoxedAgentAppContent(state: AppUiState, viewModel: AppViewModel, snackbarHostState: SnackbarHostState, strings: AppStrings) {
     if (state.authLoading || !state.authenticated) {
         Scaffold(snackbarHost = { SnackbarHost(snackbarHostState) }) { padding ->
             ConnectionScreen(state, viewModel, Modifier.padding(padding))
@@ -292,7 +301,7 @@ private fun SideOverlay(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    IconButton(onClick = onClose, modifier = Modifier.size(42.dp)) { Icon(Icons.Rounded.Close, contentDescription = "关闭") }
+                    IconButton(onClick = onClose, modifier = Modifier.size(42.dp)) { Icon(Icons.Rounded.Close, contentDescription = localized("关闭", "Close")) }
                     Column(Modifier.weight(1f)) {
                         Text(title, fontWeight = FontWeight.Black, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -465,11 +474,11 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column { Text("Boxes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); Text("Docker 沙箱与 Session 管理", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                Column { Text("Boxes", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); Text(localized("沙箱与会话", "Sandboxes and sessions"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 FilledTonalButton(onClick = { createBox = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp)); Text("Box") }
             }
         }
-        if (state.boxes.isEmpty()) item { EmptyCard("还没有 Box", "点击右上角创建一个 Ubuntu 开发沙箱。") }
+        if (state.boxes.isEmpty()) item { EmptyCard(localized("还没有 Box", "No boxes yet"), localized("点击右上角创建一个开发沙箱。", "Create a sandbox from the top right.")) }
         items(state.boxes, key = { it.id }) { box ->
             BoxCard(
                 box = box,
@@ -484,11 +493,11 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
         item { HorizontalDivider(Modifier.padding(vertical = 4.dp)) }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column { Text("Sessions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); Text(state.activeBox?.name ?: "请先选择 Box", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                Column { Text("Sessions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); Text(state.activeBox?.name ?: localized("请先选择 Box", "Select a box"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 FilledTonalButton(onClick = { createSession = true }, enabled = state.activeBox != null, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp)); Text("Session") }
             }
         }
-        if (state.activeBox != null && sessionsForBox.isEmpty()) item { EmptyCard("当前 Box 没有 Session", "创建 Session 后即可对话。") }
+        if (state.activeBox != null && sessionsForBox.isEmpty()) item { EmptyCard(localized("当前 Box 没有 Session", "No sessions in this box"), localized("创建 Session 后即可对话。", "Create a session to start chatting.")) }
         items(sessionsForBox, key = { it.id }) { session ->
             SessionCard(
                 session = session,
@@ -507,11 +516,11 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
         createBox = false; viewModel.createBox(name, image, desc, password, provider, model, thinking)
     })
     state.activeBox?.let { activeBox -> if (createSession) CreateSessionDialog(activeBox, viewModel, onDismiss = { createSession = false }) }
-    renameBox?.let { box -> InputDialog("重命名 Box", box.name, onDismiss = { renameBox = null }, onConfirm = { viewModel.renameBox(box.id, it); renameBox = null }) }
-    cloneBox?.let { box -> InputDialog("克隆 Box", "${box.name}-clone", onDismiss = { cloneBox = null }, onConfirm = { viewModel.cloneBox(box.id, it); cloneBox = null }) }
-    deleteBox?.let { box -> ConfirmDialog("删除 Box", "删除 ${box.name}? Session 会一起删除。", onDismiss = { deleteBox = null }, onConfirm = { viewModel.deleteBox(box.id); deleteBox = null }) }
-    renameSession?.let { s -> InputDialog("重命名 Session", s.name, onDismiss = { renameSession = null }, onConfirm = { viewModel.renameSession(s.id, it); renameSession = null }) }
-    deleteSession?.let { s -> ConfirmDialog("删除 Session", "删除 ${s.name}?", onDismiss = { deleteSession = null }, onConfirm = { viewModel.deleteSession(s.id); deleteSession = null }) }
+    renameBox?.let { box -> InputDialog(localized("重命名 Box", "Rename box"), box.name, onDismiss = { renameBox = null }, onConfirm = { viewModel.renameBox(box.id, it); renameBox = null }) }
+    cloneBox?.let { box -> InputDialog(localized("克隆 Box", "Clone box"), "${box.name}-clone", onDismiss = { cloneBox = null }, onConfirm = { viewModel.cloneBox(box.id, it); cloneBox = null }) }
+    deleteBox?.let { box -> ConfirmDialog(localized("删除 Box", "Delete box"), localized("删除", "Delete") + " ${box.name}?", onDismiss = { deleteBox = null }, onConfirm = { viewModel.deleteBox(box.id); deleteBox = null }) }
+    renameSession?.let { s -> InputDialog(localized("重命名 Session", "Rename session"), s.name, onDismiss = { renameSession = null }, onConfirm = { viewModel.renameSession(s.id, it); renameSession = null }) }
+    deleteSession?.let { s -> ConfirmDialog(localized("删除 Session", "Delete session"), localized("删除", "Delete") + " ${s.name}?", onDismiss = { deleteSession = null }, onConfirm = { viewModel.deleteSession(s.id); deleteSession = null }) }
     forkSession?.let { s -> ForkDialog(s, viewModel, onDismiss = { forkSession = null }) }
 }
 
@@ -532,11 +541,11 @@ private fun BoxCard(box: BoxRecord, active: Boolean, onSelect: () -> Unit, onSta
                 box.description?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 box.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             }
-            Box { IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.MoreVert, contentDescription = "操作") }; DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text(if (box.status == "running") "停止" else "启动") }, onClick = { menu = false; onStartStop() })
-                DropdownMenuItem(text = { Text("重命名") }, onClick = { menu = false; onRename() })
-                DropdownMenuItem(text = { Text("克隆") }, onClick = { menu = false; onClone() })
-                DropdownMenuItem(text = { Text("删除") }, onClick = { menu = false; onDelete() })
+            Box { IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.MoreVert, contentDescription = localized("操作", "Actions")) }; DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text(if (box.status == "running") localized("停止", "Stop") else localized("启动", "Start")) }, onClick = { menu = false; onStartStop() })
+                DropdownMenuItem(text = { Text(localized("重命名", "Rename")) }, onClick = { menu = false; onRename() })
+                DropdownMenuItem(text = { Text(localized("克隆", "Clone")) }, onClick = { menu = false; onClone() })
+                DropdownMenuItem(text = { Text(localized("删除", "Delete")) }, onClick = { menu = false; onDelete() })
             } }
         }
     }
@@ -558,12 +567,12 @@ private fun SessionCard(session: AgentSessionRecord, active: Boolean, onSelect: 
                 Text(listOf(session.provider, session.model, session.thinkingLevel, session.cwd ?: "/workspace").filterNotNull().joinToString(" · "), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 session.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             }
-            Box { IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.MoreVert, contentDescription = "操作") }; DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text(if (session.status == "running" || session.status == "working") "停止" else "启动") }, onClick = { menu = false; onStartStop() })
-                DropdownMenuItem(text = { Text("重命名") }, onClick = { menu = false; onRename() })
+            Box { IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.MoreVert, contentDescription = localized("操作", "Actions")) }; DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text(if (session.status == "running" || session.status == "working") localized("停止", "Stop") else localized("启动", "Start")) }, onClick = { menu = false; onStartStop() })
+                DropdownMenuItem(text = { Text(localized("重命名", "Rename")) }, onClick = { menu = false; onRename() })
                 DropdownMenuItem(text = { Text("Fork") }, onClick = { menu = false; onFork() })
-                DropdownMenuItem(text = { Text("复刻") }, onClick = { menu = false; onDuplicate() })
-                DropdownMenuItem(text = { Text("删除") }, onClick = { menu = false; onDelete() })
+                DropdownMenuItem(text = { Text(localized("复刻", "Duplicate")) }, onClick = { menu = false; onDuplicate() })
+                DropdownMenuItem(text = { Text(localized("删除", "Delete")) }, onClick = { menu = false; onDelete() })
             } }
         }
     }
@@ -612,16 +621,15 @@ private fun CreateBoxDialog(onDismiss: () -> Unit, onCreate: (String, String, St
     var model by remember { mutableStateOf("") }
     var thinking by remember { mutableStateOf("medium") }
     var desc by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(enabled = name.isNotBlank() && image.isNotBlank(), onClick = { onCreate(name, image, desc, password, provider, model, thinking) }) { Text("创建") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }, title = { Text("创建 Box") }, text = {
+    AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(enabled = name.isNotBlank() && image.isNotBlank(), onClick = { onCreate(name, image, desc, password, provider, model, thinking) }) { Text(localized("创建", "Create")) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } }, title = { Text(localized("创建 Box", "Create box")) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(name, { name = it }, label = { Text("名称") }, singleLine = true)
-            OutlinedTextField(image, { image = it }, label = { Text("Docker 镜像") }, singleLine = true)
-            OutlinedTextField(desc, { desc = it }, label = { Text("描述") }, singleLine = true)
-            OutlinedTextField(password, { password = it }, label = { Text("code-server 密码") }, singleLine = true)
-            OutlinedTextField(provider, { provider = it }, label = { Text("默认 Provider") }, singleLine = true)
-            OutlinedTextField(model, { model = it }, label = { Text("默认 Model") }, singleLine = true)
+            OutlinedTextField(name, { name = it }, label = { Text(localized("名称", "Name")) }, singleLine = true)
+            OutlinedTextField(image, { image = it }, label = { Text(localized("Docker 镜像", "Docker image")) }, singleLine = true)
+            OutlinedTextField(desc, { desc = it }, label = { Text(localized("描述", "Description")) }, singleLine = true)
+            OutlinedTextField(password, { password = it }, label = { Text(localized("code-server 密码", "code-server password")) }, singleLine = true)
+            OutlinedTextField(provider, { provider = it }, label = { Text(localized("默认 Provider", "Default provider")) }, singleLine = true)
+            OutlinedTextField(model, { model = it }, label = { Text(localized("默认 Model", "Default model")) }, singleLine = true)
             DropdownField("Thinking", thinking, ThinkingLevels, { thinking = it })
-            Text("默认镜像不存在时后端会自动构建；创建后会生成默认会话。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     })
 }
@@ -638,15 +646,15 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
     var search by remember { mutableStateOf("") }
     LaunchedEffect(box.id) { loading = true; models = runCatching { viewModel.loadBoxModels(box.id) }.getOrDefault(emptyList()); loading = false }
     val visible = remember(models, search) { models.filter { "${it.providerNameOrNull().orEmpty()} ${it.id} ${it.name.orEmpty()}".contains(search, ignoreCase = true) }.take(80) }
-    AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(onClick = { viewModel.createSession(name, cwd, provider, model, thinking); onDismiss() }) { Text("创建") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }, title = { Text("新建 Session") }, text = {
+    AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(onClick = { viewModel.createSession(name, cwd, provider, model, thinking); onDismiss() }) { Text(localized("创建", "Create")) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } }, title = { Text(localized("新建 Session", "New session")) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Box：${box.name}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(name, { name = it }, label = { Text("名称") }, singleLine = true)
-            OutlinedTextField(cwd, { cwd = it }, label = { Text("工作目录") }, singleLine = true)
+            Text("Box: ${box.name}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(name, { name = it }, label = { Text(localized("名称", "Name")) }, singleLine = true)
+            OutlinedTextField(cwd, { cwd = it }, label = { Text(localized("工作目录", "Working directory")) }, singleLine = true)
             DropdownField("Thinking", thinking, ThinkingLevels, { thinking = it })
-            OutlinedTextField(provider, { provider = it }, label = { Text("Provider（可留空使用 Box 默认）") }, singleLine = true)
-            OutlinedTextField(model, { model = it }, label = { Text("Model（可留空使用 Box 默认）") }, singleLine = true)
-            OutlinedTextField(search, { search = it }, label = { Text("搜索可用模型") }, singleLine = true)
+            OutlinedTextField(provider, { provider = it }, label = { Text(localized("Provider（可选）", "Provider (optional)")) }, singleLine = true)
+            OutlinedTextField(model, { model = it }, label = { Text(localized("Model（可选）", "Model (optional)")) }, singleLine = true)
+            OutlinedTextField(search, { search = it }, label = { Text(localized("搜索模型", "Search models")) }, singleLine = true)
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             visible.forEach { m -> AssistChip(onClick = { provider = m.providerNameOrNull().orEmpty(); model = m.id }, label = { Text("${m.providerNameOrNull() ?: "?"}/${m.name ?: m.id}", maxLines = 1, overflow = TextOverflow.Ellipsis) }) }
         }
@@ -659,12 +667,12 @@ private fun ForkDialog(session: AgentSessionRecord, viewModel: AppViewModel, onD
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(session.id) { loading = true; error = null; runCatching { viewModel.loadForkMessages(session.id) }.onSuccess { messages = it }.onFailure { error = it.message }; loading = false }
-    AlertDialog(onDismissRequest = onDismiss, confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }, title = { Text("Fork Session") }, text = {
+    AlertDialog(onDismissRequest = onDismiss, confirmButton = { TextButton(onClick = onDismiss) { Text(localized("关闭", "Close")) } }, title = { Text("Fork Session") }, text = {
         Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("选择一个用户消息，从该消息之前分叉。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(localized("选择分叉位置", "Choose a fork point"), color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            if (!loading && messages.isEmpty()) Text("没有可 fork 的用户消息")
+            if (!loading && messages.isEmpty()) Text(localized("没有可 fork 的用户消息", "No user messages to fork"))
             messages.forEachIndexed { i, msg ->
                 OutlinedCard(Modifier.fillMaxWidth().clickable { viewModel.forkSession(session.id, msg.entryId); onDismiss() }) {
                     Text("#${i + 1} ${msg.text.take(160)}", Modifier.padding(12.dp))
@@ -677,12 +685,12 @@ private fun ForkDialog(session: AgentSessionRecord, viewModel: AppViewModel, onD
 @Composable
 private fun InputDialog(title: String, initial: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var value by remember(initial) { mutableStateOf(initial) }
-    AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(enabled = value.isNotBlank(), onClick = { onConfirm(value.trim()) }) { Text("确定") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }, title = { Text(title) }, text = { OutlinedTextField(value, { value = it }, singleLine = true, modifier = Modifier.fillMaxWidth()) })
+    AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(enabled = value.isNotBlank(), onClick = { onConfirm(value.trim()) }) { Text(localized("确定", "OK")) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } }, title = { Text(title) }, text = { OutlinedTextField(value, { value = it }, singleLine = true, modifier = Modifier.fillMaxWidth()) })
 }
 
 @Composable
 private fun ConfirmDialog(title: String, text: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
-    AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("删除") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }, title = { Text(title) }, text = { Text(text) })
+    AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(onClick = onConfirm, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text(localized("删除", "Delete")) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } }, title = { Text(title) }, text = { Text(text) })
 }
 
 @Composable
@@ -778,7 +786,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 Text("BoxedAgent", fontSize = 23.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
                 IconButton(onClick = { viewModel.setPanel(MainPanel.Tools) }) { Icon(Icons.Rounded.FormatListBulleted, contentDescription = "Tools", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            CenterWelcome("选择或创建 Box", "每个 Box 都是独立 Docker 沙箱。点击左上角打开 Boxes。")
+            CenterWelcome(localized("选择或创建 Box", "Select or create a box"), localized("点击左上角打开 Boxes。", "Open Boxes from the top left."))
         }
         return
     }
@@ -790,7 +798,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 Text(activeBox.name, fontSize = 23.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
                 IconButton(onClick = { viewModel.setPanel(MainPanel.Tools) }) { Icon(Icons.Rounded.FormatListBulleted, contentDescription = "Tools", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            CenterWelcome("选择或创建 Session", "Session 负责和 Box 内的 pi RPC agent 对话。点击左上角打开 Sessions。")
+            CenterWelcome(localized("选择或创建 Session", "Select or create a session"), localized("点击左上角打开 Sessions。", "Open Sessions from the top left."))
         }
         return
     }
@@ -845,7 +853,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                 canSend = canSend,
                 isWorking = state.activeTurn,
                 thinking = session.thinkingLevel ?: "medium",
-                model = session.model ?: "模型",
+                model = session.model ?: localized("模型", "Model"),
                 autoCompact = session.autoCompactionEnabled != false,
                 showThinkingMenu = showThinkingMenu,
                 onShowThinkingMenu = { showThinkingMenu = it },
@@ -888,11 +896,11 @@ private fun SearchMessagesSheet(messages: List<ChatMessage>, onDismiss: () -> Un
         else messages.filter { it.preview().contains(q, ignoreCase = true) }
     }
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        SheetHeader(Icons.Rounded.Search, "搜索消息", "搜索当前 Session 的用户、助手与工具消息")
+        SheetHeader(Icons.Rounded.Search, localized("搜索消息", "Search messages"), localized("搜索当前 Session", "Search this session"))
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            label = { Text("输入关键词") },
+            label = { Text(localized("输入关键词", "Keyword")) },
             leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp)
@@ -906,7 +914,7 @@ private fun SearchMessagesSheet(messages: List<ChatMessage>, onDismiss: () -> Un
                     modifier = Modifier.clickable { onJump(msg) }
                 )
             }
-            if (results.isEmpty()) item { Text("没有匹配消息", Modifier.padding(18.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (results.isEmpty()) item { Text(localized("没有匹配消息", "No matches"), Modifier.padding(18.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }
@@ -915,8 +923,8 @@ private fun SearchMessagesSheet(messages: List<ChatMessage>, onDismiss: () -> Un
 private fun MessageDialog(text: String, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
-        title = { Text("消息内容") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(localized("关闭", "Close")) } },
+        title = { Text(localized("消息内容", "Message")) },
         text = { Box(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) { MarkdownishText(text) } }
     )
 }
@@ -937,10 +945,10 @@ private fun ScrollQuickActions(visible: Boolean, listState: LazyListState, messa
         exit = fadeOut(tween(150)) + slideOutHorizontally(tween(190)) { it }
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            QuickJumpButton(Icons.Rounded.KeyboardDoubleArrowUp, "顶部") { jump(0) }
-            QuickJumpButton(Icons.Rounded.KeyboardArrowUp, "上一条用户消息") { jump(userIndexes.lastOrNull { it < listState.firstVisibleItemIndex }) }
-            QuickJumpButton(Icons.Rounded.KeyboardArrowDown, "下一条用户消息") { jump(userIndexes.firstOrNull { it > listState.firstVisibleItemIndex }) }
-            QuickJumpButton(Icons.Rounded.KeyboardDoubleArrowDown, "底部") { jump(total - 1) }
+            QuickJumpButton(Icons.Rounded.KeyboardDoubleArrowUp, localized("顶部", "Top")) { jump(0) }
+            QuickJumpButton(Icons.Rounded.KeyboardArrowUp, localized("上一条用户消息", "Previous user message")) { jump(userIndexes.lastOrNull { it < listState.firstVisibleItemIndex }) }
+            QuickJumpButton(Icons.Rounded.KeyboardArrowDown, localized("下一条用户消息", "Next user message")) { jump(userIndexes.firstOrNull { it > listState.firstVisibleItemIndex }) }
+            QuickJumpButton(Icons.Rounded.KeyboardDoubleArrowDown, localized("底部", "Bottom")) { jump(total - 1) }
         }
     }
 }
@@ -972,11 +980,11 @@ private fun ChatTopBar(
             IconButton(onClick = onBoxes, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.Menu, contentDescription = "Boxes", modifier = Modifier.size(30.dp), tint = colors.onSurface) }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(session.name, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(listOf(session.provider ?: "默认助手", session.model).filterNotNull().joinToString(" / "), fontSize = 12.sp, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(listOf(session.provider ?: localized("默认助手", "Default assistant"), session.model).filterNotNull().joinToString(" / "), fontSize = 12.sp, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (isWorking) StatusChip("working")
             IconButton(onClick = onTools, modifier = Modifier.size(38.dp)) { Icon(Icons.Rounded.FormatListBulleted, contentDescription = "Tools", modifier = Modifier.size(28.dp), tint = colors.onSurfaceVariant) }
-            IconButton(onClick = onNewSession, modifier = Modifier.size(38.dp)) { Icon(Icons.Rounded.AddComment, contentDescription = "新建 Session", modifier = Modifier.size(28.dp), tint = colors.onSurfaceVariant) }
+            IconButton(onClick = onNewSession, modifier = Modifier.size(38.dp)) { Icon(Icons.Rounded.AddComment, contentDescription = localized("新建 Session", "New session"), modifier = Modifier.size(28.dp), tint = colors.onSurfaceVariant) }
         }
         TopStatsLine(stats, autoCompact, Modifier.fillMaxWidth().padding(start = 48.dp, end = 2.dp))
     }
@@ -1007,7 +1015,7 @@ private fun ProcessingCard() {
     ) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
-            Text("pi 正在处理…", fontWeight = FontWeight.SemiBold)
+            Text(localized("pi 正在处理…", "pi is working…"), fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -1079,7 +1087,7 @@ private fun ChatComposer(
             }
             Surface(color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp, max = 132.dp)) {
                 Box(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-                    if (text.isBlank()) Text("输入消息与 AI 聊天", fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (text.isBlank()) Text(localized("输入消息", "Message"), fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     BasicTextField(
                         value = text,
                         onValueChange = onTextChange,
@@ -1091,14 +1099,14 @@ private fun ChatComposer(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 val active = MaterialTheme.colorScheme.primary
                 val inactive = MaterialTheme.colorScheme.onSurfaceVariant
-                ComposerIconButton(Icons.Rounded.AutoAwesome, "模型", selected = model != "模型", onClick = { onShowModelMenu(true) })
-                ComposerIconButton(Icons.Rounded.Search, "搜索消息", onClick = onSearchClick)
+                ComposerIconButton(Icons.Rounded.AutoAwesome, localized("模型", "Model"), selected = model != localized("模型", "Model"), onClick = { onShowModelMenu(true) })
+                ComposerIconButton(Icons.Rounded.Search, localized("搜索消息", "Search"), onClick = onSearchClick)
                 ComposerIconButton(Icons.Rounded.Lightbulb, "Thinking $thinking", selected = thinking != "off", onClick = { onShowThinkingMenu(true) })
                 ComposerIconButton(Icons.Rounded.Tune, "Compact", selected = autoCompact, onClick = { onShowCompactMenu(true) })
-                ComposerIconButton(Icons.Rounded.AttachFile, "附件", selected = attachments.isNotEmpty(), onClick = onPickFiles)
-                ComposerIconButton(Icons.Rounded.Add, "更多", onClick = { onShowCompactMenu(true) })
+                ComposerIconButton(Icons.Rounded.AttachFile, localized("附件", "Attach"), selected = attachments.isNotEmpty(), onClick = onPickFiles)
+                ComposerIconButton(Icons.Rounded.Add, localized("更多", "More"), onClick = { onShowCompactMenu(true) })
                 if (isWorking && !canSend) {
-                    FilledIconButton(onClick = onAbort, modifier = Modifier.size(38.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)) { Icon(Icons.Rounded.Stop, contentDescription = "中止", modifier = Modifier.size(22.dp)) }
+                    FilledIconButton(onClick = onAbort, modifier = Modifier.size(38.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)) { Icon(Icons.Rounded.Stop, contentDescription = localized("中止", "Abort"), modifier = Modifier.size(22.dp)) }
                 } else {
                     FilledIconButton(
                         onClick = { if (isWorking) onShowSendModeMenu(true) else onSend(null) },
@@ -1110,7 +1118,7 @@ private fun ChatComposer(
                             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
                             disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .55f)
                         )
-                    ) { Icon(Icons.Rounded.ArrowUpward, contentDescription = "发送", modifier = Modifier.size(22.dp)) }
+                    ) { Icon(Icons.Rounded.ArrowUpward, contentDescription = localized("发送", "Send"), modifier = Modifier.size(22.dp)) }
                 }
             }
         }
@@ -1165,7 +1173,7 @@ private fun ChatOptionSheets(
 ) {
     if (showThinkingMenu) {
         ModalBottomSheet(onDismissRequest = { onShowThinkingMenu(false) }) {
-            SheetHeader(Icons.Rounded.Lightbulb, "思考强度", "选择当前 Session 的 thinking level")
+            SheetHeader(Icons.Rounded.Lightbulb, localized("思考强度", "Thinking"), localized("选择推理强度", "Choose reasoning level"))
             ThinkingLevels.forEach { level ->
                 ListItem(
                     headlineContent = { Text(level) },
@@ -1181,8 +1189,8 @@ private fun ChatOptionSheets(
         var search by remember { mutableStateOf("") }
         val models = remember(state.sessionModels, search) { state.sessionModels.filter { "${it.providerNameOrNull().orEmpty()} ${it.id} ${it.name.orEmpty()}".contains(search, ignoreCase = true) }.take(160) }
         ModalBottomSheet(onDismissRequest = { onShowModelMenu(false) }) {
-            SheetHeader(Icons.Rounded.AutoAwesome, "模型", "切换当前 agent runtime 使用的 provider / model")
-            OutlinedTextField(search, { search = it }, leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) }, label = { Text("搜索 provider / model") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp))
+            SheetHeader(Icons.Rounded.AutoAwesome, localized("模型", "Model"), localized("切换 provider / model", "Switch provider / model"))
+            OutlinedTextField(search, { search = it }, leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) }, label = { Text(localized("搜索 provider / model", "Search provider / model")) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp))
             if (state.modelLoading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(18.dp))
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
                 items(models, key = { "${it.providerNameOrNull()}/${it.id}" }) { model ->
@@ -1194,28 +1202,28 @@ private fun ChatOptionSheets(
                         modifier = Modifier.clickable { onShowModelMenu(false); viewModel.setSessionModel(model) }
                     )
                 }
-                if (!state.modelLoading && models.isEmpty()) item { Text("没有可显示的模型", Modifier.padding(18.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if (!state.modelLoading && models.isEmpty()) item { Text(localized("没有可显示的模型", "No models"), Modifier.padding(18.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         }
     }
     if (showCompactMenu) {
         ModalBottomSheet(onDismissRequest = { onShowCompactMenu(false) }) {
-            SheetHeader(Icons.Rounded.Tune, "Compact / 更多", "上下文压缩与附加操作")
+            SheetHeader(Icons.Rounded.Tune, localized("Compact / 更多", "Compact / More"), localized("上下文与附加操作", "Context and actions"))
             ListItem(
-                headlineContent = { Text("自动 Compact") },
-                supportingContent = { Text(if (autoCompact) "已开启：上下文接近上限时自动压缩" else "点击开启自动压缩") },
+                headlineContent = { Text(localized("自动 Compact", "Auto compact")) },
+                supportingContent = { Text(if (autoCompact) localized("已开启", "Enabled") else localized("点击开启", "Tap to enable")) },
                 leadingContent = { Icon(if (autoCompact) Icons.Rounded.ToggleOn else Icons.Rounded.ToggleOff, contentDescription = null, tint = if (autoCompact) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) },
                 modifier = Modifier.clickable { onShowCompactMenu(false); viewModel.setAutoCompaction(true) }
             )
             ListItem(
-                headlineContent = { Text("手动 Compact") },
-                supportingContent = { Text("关闭自动压缩，只在你手动触发时压缩") },
+                headlineContent = { Text(localized("手动 Compact", "Manual compact")) },
+                supportingContent = { Text(localized("仅手动触发", "Only when triggered")) },
                 leadingContent = { Icon(if (!autoCompact) Icons.Rounded.CheckCircle else Icons.Rounded.RadioButtonUnchecked, contentDescription = null) },
                 modifier = Modifier.clickable { onShowCompactMenu(false); viewModel.setAutoCompaction(false) }
             )
             ListItem(
-                headlineContent = { Text("立即执行 Compact") },
-                supportingContent = { Text(if (text.isBlank()) "直接压缩当前上下文" else "输入框内容会作为本次压缩要求") },
+                headlineContent = { Text(localized("立即执行 Compact", "Compact now")) },
+                supportingContent = { Text(if (text.isBlank()) localized("压缩当前上下文", "Compact current context") else localized("使用输入内容作为要求", "Use input as instructions")) },
                 leadingContent = { Icon(Icons.Rounded.Archive, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                 modifier = Modifier.clickable { onShowCompactMenu(false); viewModel.compact(text.trim().ifBlank { null }); onTextChange("") }
             )
@@ -1224,22 +1232,22 @@ private fun ChatOptionSheets(
     }
     if (showSendModeMenu) {
         ModalBottomSheet(onDismissRequest = { onShowSendModeMenu(false) }) {
-            SheetHeader(Icons.Rounded.Send, "发送方式", "当前 agent 正在处理时选择队列策略")
+            SheetHeader(Icons.Rounded.Send, localized("发送方式", "Send mode"), localized("选择队列策略", "Choose queue behavior"))
             ListItem(
-                headlineContent = { Text("立即发送") },
-                supportingContent = { Text("中断当前 turn，然后发送这条消息") },
+                headlineContent = { Text(localized("立即发送", "Send now")) },
+                supportingContent = { Text(localized("中断当前 turn", "Abort current turn")) },
                 leadingContent = { Icon(Icons.Rounded.FlashOn, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                 modifier = Modifier.clickable { onShowSendModeMenu(false); onSend(null) }
             )
             ListItem(
-                headlineContent = { Text("Steer 队列") },
-                supportingContent = { Text("当前 turn 期间注入 steering message") },
+                headlineContent = { Text(localized("Steer 队列", "Steer queue")) },
+                supportingContent = { Text(localized("注入当前 turn", "Inject into current turn")) },
                 leadingContent = { Icon(Icons.Rounded.AltRoute, contentDescription = null) },
                 modifier = Modifier.clickable { onShowSendModeMenu(false); onSend("steer") }
             )
             ListItem(
-                headlineContent = { Text("Follow-up 队列") },
-                supportingContent = { Text("agent 完成后继续追问") },
+                headlineContent = { Text(localized("Follow-up 队列", "Follow-up queue")) },
+                supportingContent = { Text(localized("完成后发送", "Send after completion")) },
                 leadingContent = { Icon(Icons.Rounded.Queue, contentDescription = null) },
                 modifier = Modifier.clickable { onShowSendModeMenu(false); onSend("followUp") }
             )
@@ -1261,13 +1269,14 @@ private fun SheetHeader(icon: androidx.compose.ui.graphics.vector.ImageVector, t
     }
 }
 
+@Composable
 private fun thinkingDescription(level: String): String = when (level) {
-    "off" -> "关闭扩展思考"
-    "minimal" -> "最少推理，响应更快"
-    "low" -> "低强度思考"
-    "medium" -> "默认平衡"
-    "high" -> "更强推理"
-    "xhigh" -> "超高推理，需模型支持"
+    "off" -> localized("关闭扩展思考", "Disable extended thinking")
+    "minimal" -> localized("最少推理", "Minimal reasoning")
+    "low" -> localized("低强度思考", "Low reasoning")
+    "medium" -> localized("默认平衡", "Balanced")
+    "high" -> localized("更强推理", "Stronger reasoning")
+    "xhigh" -> localized("超高推理", "Extra high reasoning")
     else -> ""
 }
 
@@ -1276,10 +1285,10 @@ private fun ModelDropdown(expanded: Boolean, onDismiss: () -> Unit, state: AppUi
     var search by remember { mutableStateOf("") }
     val models = remember(state.sessionModels, search) { state.sessionModels.filter { "${it.providerNameOrNull().orEmpty()} ${it.id} ${it.name.orEmpty()}".contains(search, ignoreCase = true) }.take(120) }
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss, modifier = Modifier.heightIn(max = 520.dp).widthIn(min = 320.dp)) {
-        DropdownMenuItem(text = { OutlinedTextField(search, { search = it }, label = { Text("搜索") }, singleLine = true) }, onClick = {})
+        DropdownMenuItem(text = { OutlinedTextField(search, { search = it }, label = { Text(localized("搜索", "Search")) }, singleLine = true) }, onClick = {})
         if (state.modelLoading) DropdownMenuItem(text = { LinearProgressIndicator(Modifier.fillMaxWidth()) }, onClick = {})
         models.forEach { model -> DropdownMenuItem(text = { Column { Text(model.name ?: model.id); Text("${model.providerNameOrNull() ?: "unknown"} · ${model.id}${model.contextWindow?.let { " · ${formatTokens(it)} ctx" } ?: ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } }, onClick = { onDismiss(); viewModel.setSessionModel(model) }) }
-        if (!state.modelLoading && models.isEmpty()) DropdownMenuItem(text = { Text("没有可显示的模型") }, onClick = {})
+        if (!state.modelLoading && models.isEmpty()) DropdownMenuItem(text = { Text(localized("没有可显示的模型", "No models")) }, onClick = {})
     }
 }
 
@@ -1293,7 +1302,7 @@ private fun MessageBubble(message: ChatMessage, autoOpenProgress: Boolean, onFor
         }
         "assistant" -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             val hasThinking = message.thinking?.isNotBlank() == true
-            message.thinking?.takeIf { it.isNotBlank() }?.let { ExpandableBlock("思考过程", it, autoOpen = autoOpenProgress, stateKey = message.id) }
+            message.thinking?.takeIf { it.isNotBlank() }?.let { ExpandableBlock(localized("思考过程", "Thinking"), it, autoOpen = autoOpenProgress, stateKey = message.id) }
             if (message.text.isNotBlank()) MarkdownishText(message.text) else if (!hasThinking) Spacer(Modifier.height(1.dp))
             AttachmentGallery(message.attachments)
             if (message.text.isNotBlank()) AssistantActions(message.text, onFork, onShowDialog)
@@ -1308,9 +1317,9 @@ private fun AssistantActions(text: String, onFork: () -> Unit, onShowDialog: () 
     val clipboard = LocalClipboardManager.current
     val color = MaterialTheme.colorScheme.onSurfaceVariant
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = { clipboard.setText(AnnotatedString(text)) }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.ContentCopy, contentDescription = "复制", tint = color) }
+        IconButton(onClick = { clipboard.setText(AnnotatedString(text)) }, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.ContentCopy, contentDescription = localized("复制", "Copy"), tint = color) }
         IconButton(onClick = onFork, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.CallSplit, contentDescription = "Fork", tint = color) }
-        IconButton(onClick = onShowDialog, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.OpenInFull, contentDescription = "Dialog 显示", tint = color) }
+        IconButton(onClick = onShowDialog, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.OpenInFull, contentDescription = localized("查看完整内容", "Open full text"), tint = color) }
     }
 }
 
@@ -1372,18 +1381,18 @@ private fun MarkdownTextBlock(text: String) {
                         lines.forEach { line ->
                             Row(horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.Top) {
                                 Text("•", color = colors.primary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                                Text(inlineMarkdown(line.trimStart().drop(2).trim()), color = colors.onSurface, fontSize = 16.sp, lineHeight = 24.sp, modifier = Modifier.weight(1f))
+                                Text(inlineMarkdown(line.trimStart().drop(2).trim(), colors.background.luminance() < 0.5f), color = colors.onSurface, fontSize = 16.sp, lineHeight = 24.sp, modifier = Modifier.weight(1f))
                             }
                         }
                     }
                 }
-                else -> Text(inlineMarkdown(para), color = colors.onSurface, fontSize = 16.sp, lineHeight = 24.sp)
+                else -> Text(inlineMarkdown(para, colors.background.luminance() < 0.5f), color = colors.onSurface, fontSize = 16.sp, lineHeight = 24.sp)
             }
         }
     }
 }
 
-private fun inlineMarkdown(text: String): AnnotatedString = buildAnnotatedString {
+private fun inlineMarkdown(text: String, dark: Boolean): AnnotatedString = buildAnnotatedString {
     val re = Regex("(\\*\\*[^*]+\\*\\*|`[^`]+`)")
     var last = 0
     for (m in re.findAll(text)) {
@@ -1391,7 +1400,7 @@ private fun inlineMarkdown(text: String): AnnotatedString = buildAnnotatedString
         val token = m.value
         when {
             token.startsWith("**") -> withStyle(SpanStyle(fontWeight = FontWeight.Black)) { append(token.removePrefix("**").removeSuffix("**")) }
-            token.startsWith("`") -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = Color(0xFFE8EAF6), color = Color(0xFF5B3DB5))) { append(token.removePrefix("`").removeSuffix("`")) }
+            token.startsWith("`") -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = if (dark) Color(0xFF2B2930) else Color(0xFFE8EAF6), color = if (dark) Color(0xFFD0BCFF) else Color(0xFF5B3DB5))) { append(token.removePrefix("`").removeSuffix("`")) }
         }
         last = m.range.last + 1
     }
@@ -1477,14 +1486,15 @@ private fun toolIcon(kind: ToolKind): ImageVector = when (kind) {
     ToolKind.Unknown -> Icons.Rounded.Build
 }
 
+@Composable
 private fun toolLabel(kind: ToolKind, name: String?): String = when (kind) {
-    ToolKind.Read -> "读取文件"
-    ToolKind.Edit -> "编辑文件"
-    ToolKind.Write -> "写入文件"
-    ToolKind.Bash -> "执行命令"
-    ToolKind.Ls -> "列出目录"
-    ToolKind.Grep -> "搜索文本"
-    ToolKind.Find -> "查找文件"
+    ToolKind.Read -> localized("读取文件", "Read file")
+    ToolKind.Edit -> localized("编辑文件", "Edit file")
+    ToolKind.Write -> localized("写入文件", "Write file")
+    ToolKind.Bash -> localized("执行命令", "Run command")
+    ToolKind.Ls -> localized("列出目录", "List directory")
+    ToolKind.Grep -> localized("搜索文本", "Search text")
+    ToolKind.Find -> localized("查找文件", "Find files")
     ToolKind.Unknown -> name?.takeIf { it.isNotBlank() } ?: "tool"
 }
 
@@ -1531,10 +1541,10 @@ private fun ToolOverview(message: ChatMessage, modifier: Modifier = Modifier) {
                 val stats = editChangeStats(edits)
                 val paths = uniqueStrings(listOf(path) + edits.map { it.path })
                 if (paths.isNotEmpty()) ToolMuted("${paths.size} files")
-                if (edits.isNotEmpty()) ToolChangeStats(stats.added, stats.removed) else ToolMuted(previewText(result) ?: "等待 diff")
+                if (edits.isNotEmpty()) ToolChangeStats(stats.added, stats.removed) else ToolMuted(previewText(result) ?: localized("等待 diff", "Waiting for diff"))
                 paths.firstOrNull()?.let { ToolFileRef(it) }
                 if (paths.size > 1) ToolMuted("+${paths.size - 1}")
-                if (paths.isEmpty() && edits.isEmpty() && result.isBlank()) ToolMuted("点击查看详情")
+                if (paths.isEmpty() && edits.isEmpty() && result.isBlank()) ToolMuted(localized("点击查看详情", "Details"))
             }
             ToolKind.Read -> {
                 if (path != null) ToolFileRef(path) else ToolMuted("file")
@@ -1550,11 +1560,11 @@ private fun ToolOverview(message: ChatMessage, modifier: Modifier = Modifier) {
                 val command = bashCommand(message.toolArgs)
                 if (command != null) ToolInlineCode("$ ${previewText(command, 180)}") else ToolMuted(previewText(result) ?: "shell")
             }
-            ToolKind.Ls -> if (path != null) ToolFileRef(path) else ToolMuted("当前目录")
+            ToolKind.Ls -> if (path != null) ToolFileRef(path) else ToolMuted(localized("当前目录", "Current directory"))
             ToolKind.Grep, ToolKind.Find -> {
                 args.firstString("pattern", "query", "regex", "name", "value")?.let { ToolInlineCode(previewText(it, 80) ?: it) }
                 path?.let { ToolFileRef(it) }
-                if (path == null && args.firstString("pattern", "query", "regex", "name", "value") == null) ToolMuted(previewText(message.toolArgs?.let { pretty(it) } ?: result) ?: "点击查看详情")
+                if (path == null && args.firstString("pattern", "query", "regex", "name", "value") == null) ToolMuted(previewText(message.toolArgs?.let { pretty(it) } ?: result) ?: localized("点击查看详情", "Details"))
             }
             ToolKind.Unknown -> ToolMuted(compactText(path?.let { fileNameFromPath(it) }, previewText(message.toolArgs?.let { pretty(it) }), previewText(result)))
         }
@@ -1578,7 +1588,7 @@ private fun ToolInlineCode(text: String, language: String = "bash") {
 private fun ToolChangeStats(added: Int, removed: Int) {
     val add = added.coerceAtLeast(0)
     val del = removed.coerceAtLeast(0)
-    if (add == 0 && del == 0) { ToolMuted("无行变更"); return }
+    if (add == 0 && del == 0) { ToolMuted(localized("无行变更", "No changes")); return }
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         if (add > 0) Text("+$add", color = Color(0xFF7EE787), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
         if (del > 0) Text("-$del", color = Color(0xFFFF7B72), fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black, fontSize = 12.sp, maxLines = 1)
@@ -1662,50 +1672,50 @@ private fun ToolPreview(message: ChatMessage) {
         when (kind) {
             ToolKind.Write -> {
                 val content = args.firstString("content", "newText", "new_text", "replacement", "text", "value", "data")
-                ToolPreviewHeader("写入 diff", path)
+                ToolPreviewHeader(localized("写入 diff", "Write diff"), path)
                 if (!content.isNullOrBlank()) DiffBlock("Unified diff", buildWriteDiff(content, path))
-                else if (result.isNotBlank()) ToolCodeBlock("输出预览", result)
-                else EmptyToolPreview("没有可显示的写入内容")
-                if (result.isNotBlank() && content != null) SmallToolDetails("工具结果") { ToolCodeBlock("输出预览", result, maxLines = 10) }
+                else if (result.isNotBlank()) ToolCodeBlock(localized("输出预览", "Output"), result)
+                else EmptyToolPreview(localized("没有可显示的写入内容", "No write content"))
+                if (result.isNotBlank() && content != null) SmallToolDetails(localized("工具结果", "Tool result")) { ToolCodeBlock(localized("输出预览", "Output"), result, maxLines = 10) }
             }
             ToolKind.Edit -> {
                 val edits = editDiffInputs(args, path)
                 val diffs = buildEditDiffs(args, path)
-                ToolPreviewHeader("编辑 diff", path ?: edits.firstOrNull()?.path, if (edits.size > 1) "${edits.size} blocks" else null)
+                ToolPreviewHeader(localized("编辑 diff", "Edit diff"), path ?: edits.firstOrNull()?.path, if (edits.size > 1) "${edits.size} blocks" else null)
                 if (diffs.isNotEmpty()) DiffBlock("Unified diff", diffs)
-                else if (result.isNotBlank()) ToolCodeBlock("输出预览", result)
-                else EmptyToolPreview("没有可显示的编辑内容")
-                if (result.isNotBlank() && diffs.isNotEmpty()) SmallToolDetails("工具结果") { ToolCodeBlock("输出预览", result, maxLines = 10) }
-                else if (message.toolArgs != null && diffs.isEmpty()) SmallToolDetails("参数") { ToolCodeBlock("json", pretty(message.toolArgs), maxLines = 10) }
+                else if (result.isNotBlank()) ToolCodeBlock(localized("输出预览", "Output"), result)
+                else EmptyToolPreview(localized("没有可显示的编辑内容", "No edit content"))
+                if (result.isNotBlank() && diffs.isNotEmpty()) SmallToolDetails(localized("工具结果", "Tool result")) { ToolCodeBlock(localized("输出预览", "Output"), result, maxLines = 10) }
+                else if (message.toolArgs != null && diffs.isEmpty()) SmallToolDetails(localized("参数", "Args")) { ToolCodeBlock("json", pretty(message.toolArgs), maxLines = 10) }
             }
             ToolKind.Read -> {
                 val display = result.ifBlank { message.toolArgs?.let { pretty(it) }.orEmpty() }
-                ToolPreviewHeader("读取", path, readLineSummary(args, result))
+                ToolPreviewHeader(localized("读取", "Read"), path, readLineSummary(args, result))
                 if (display.isNotBlank()) ToolCodeBlock(languageForPath(path).ifBlank { "text" }, display)
-                else EmptyToolPreview("没有可显示的读取结果")
+                else EmptyToolPreview(localized("没有可显示的读取结果", "No read output"))
             }
             ToolKind.Bash -> {
                 val command = bashCommand(message.toolArgs)
                 if (!command.isNullOrBlank()) {
-                    ToolPreviewHeader("模型执行的命令", null)
+                    ToolPreviewHeader(localized("执行命令", "Command"), null)
                     ToolCodeBlock("$ command", command, maxLines = 24)
                 }
                 if (result.isNotBlank()) {
-                    ToolPreviewHeader("输出预览", null)
+                    ToolPreviewHeader(localized("输出预览", "Output"), null)
                     ToolCodeBlock("terminal", result)
                 }
-                if (command.isNullOrBlank() && result.isBlank()) EmptyToolPreview("命令尚未产生输出")
+                if (command.isNullOrBlank() && result.isBlank()) EmptyToolPreview(localized("暂无输出", "No output yet"))
             }
             ToolKind.Ls, ToolKind.Grep, ToolKind.Find, ToolKind.Unknown -> {
                 if (message.toolArgs != null) {
-                    ToolPreviewHeader("参数", path)
+                    ToolPreviewHeader(localized("参数", "Args"), path)
                     ToolCodeBlock("json", pretty(message.toolArgs), maxLines = 10)
                 }
                 if (result.isNotBlank()) {
-                    ToolPreviewHeader("输出预览", path)
-                    ToolCodeBlock("输出", result)
+                    ToolPreviewHeader(localized("输出预览", "Output"), path)
+                    ToolCodeBlock(localized("输出", "Output"), result)
                 }
-                if (message.toolArgs == null && result.isBlank()) EmptyToolPreview("没有可显示的工具内容")
+                if (message.toolArgs == null && result.isBlank()) EmptyToolPreview(localized("没有可显示的工具内容", "No tool content"))
             }
         }
     }
@@ -1777,15 +1787,15 @@ private fun DiffBlock(title: String, lines: List<DiffLine>, maxLines: Int = 240)
             if (clipped) {
                 TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
                     Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(13.dp))
-                    Text(if (expanded) "收起" else "展开全部", fontSize = 12.sp)
+                    Text(if (expanded) localized("收起", "Collapse") else localized("展开全部", "Expand"), fontSize = 12.sp)
                 }
             }
-            TextButton(onClick = { clipboard.setText(AnnotatedString(text)) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) { Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp)); Text("复制", fontSize = 12.sp) }
+            TextButton(onClick = { clipboard.setText(AnnotatedString(text)) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) { Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp)); Text(localized("复制", "Copy"), fontSize = 12.sp) }
         }
         SelectionContainer {
             Column(Modifier.fillMaxWidth().background(bg)) {
                 visible.forEach { line -> DiffLineRow(line) }
-                if (clipped && !expanded) DiffLineRow(DiffLine(DiffLineType.Meta, "… 已隐藏 ${lines.size - maxLines} 行 diff，共 ${lines.size} 行；点击“展开全部”查看完整结果"))
+                if (clipped && !expanded) DiffLineRow(DiffLine(DiffLineType.Meta, localized("… 已隐藏 ${lines.size - maxLines} 行，共 ${lines.size} 行", "… ${lines.size - maxLines} hidden lines, ${lines.size} total")))
             }
         }
     }
@@ -1929,10 +1939,10 @@ private fun readLineSummary(args: JsonObject?, result: String): String? {
     val start = args.numericValue("offset", "start", "startLine", "start_line", "line", "from")
     val limit = args.numericValue("limit", "lines", "lineCount", "line_count", "count")
     return when {
-        start != null && limit != null -> "第 $start-${max(start, start + limit - 1)} 行"
-        start != null -> "第 $start 行起"
-        limit != null -> "前 $limit 行"
-        result.isNotBlank() -> lineCount(result).takeIf { it > 0 }?.let { if (it == 1) "第 1 行" else "第 1-$it 行" }
+        start != null && limit != null -> "L$start-${max(start, start + limit - 1)}"
+        start != null -> "L$start+"
+        limit != null -> "first $limit lines"
+        result.isNotBlank() -> lineCount(result).takeIf { it > 0 }?.let { if (it == 1) "L1" else "L1-$it" }
         else -> null
     }
 }
@@ -1940,7 +1950,7 @@ private fun JsonObject?.numericValue(vararg keys: String): Int? = keys.firstNotN
     val raw = this?.stringValue(key)?.replace(",", "")?.trim()
     raw?.toDoubleOrNull()?.takeIf { it.isFinite() }?.toInt()?.coerceAtLeast(1)
 }
-private fun compactText(vararg parts: String?): String = parts.mapNotNull { it?.trim()?.takeIf(String::isNotBlank) }.joinToString(" · ").ifBlank { "点击查看详情" }
+private fun compactText(vararg parts: String?): String = parts.mapNotNull { it?.trim()?.takeIf(String::isNotBlank) }.joinToString(" · ").ifBlank { "Details" }
 private fun previewText(value: String?, max: Int = 90): String? {
     val text = value?.replace(Regex("\\s+"), " ")?.trim().orEmpty()
     if (text.isBlank()) return null
@@ -1996,22 +2006,20 @@ private fun CodeBlock(
             if (clipped) {
                 TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
                     Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(13.dp))
-                    Text(if (expanded) "收起" else "展开全部", fontSize = 12.sp)
+                    Text(if (expanded) localized("收起", "Collapse") else localized("展开全部", "Expand"), fontSize = 12.sp)
                 }
             }
-            TextButton(onClick = { clipboard.setText(AnnotatedString(text)) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) { Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp)); Text("复制", fontSize = 12.sp) }
+            TextButton(onClick = { clipboard.setText(AnnotatedString(text)) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) { Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp)); Text(localized("复制", "Copy"), fontSize = 12.sp) }
         }
         SelectionContainer { Text(highlightCode(displayText, title, dark), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().background(bg).padding(10.dp), lineHeight = 18.sp) }
         if (clipped && !expanded) {
             val hiddenLines = (lines.size - (maxCollapsedLines ?: lines.size)).coerceAtLeast(0)
             val hiddenChars = (text.length - displayText.length).coerceAtLeast(0)
             Text(
-                buildString {
-                    append("… ")
-                    if (hiddenLines > 0) append("本地折叠 $hiddenLines 行，共 ${lines.size} 行")
-                    if (hiddenLines > 0 && hiddenChars > 0) append("；")
-                    if (hiddenChars > 0) append("已隐藏 $hiddenChars 个字符")
-                    append("。点击“展开全部”查看完整结果。")
+                if (LocalAppStrings.current === EnStrings) {
+                    "… ${listOfNotNull(hiddenLines.takeIf { it > 0 }?.let { "$it folded lines, ${lines.size} total" }, hiddenChars.takeIf { it > 0 }?.let { "$it hidden chars" }).joinToString("; ")}."
+                } else {
+                    "… ${listOfNotNull(hiddenLines.takeIf { it > 0 }?.let { "折叠 $it 行，共 ${lines.size} 行" }, hiddenChars.takeIf { it > 0 }?.let { "隐藏 $it 个字符" }).joinToString("；")}" 
                 },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
@@ -2160,7 +2168,7 @@ private fun ExpandableBlock(title: String, text: String, autoOpen: Boolean = fal
                     Icon(Icons.Rounded.Psychology, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                     Text(title, fontWeight = FontWeight.Bold)
                 }
-                Text(if (open) "收起" else "展开", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                Text(if (open) localized("收起", "Collapse") else localized("展开", "Expand"), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
             }
             if (open) Spacer(Modifier.height(8.dp))
             if (open) MarkdownishText(text)
@@ -2230,14 +2238,14 @@ private fun ImagePreviewDialog(image: ChatAttachment.Image, onDismiss: () -> Uni
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(localized("关闭", "Close")) } },
         title = { Text(image.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 image.path?.let { Text(it, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 Box(Modifier.fillMaxWidth().heightIn(min = 180.dp, max = 460.dp).background(MaterialTheme.colorScheme.surfaceContainerHighest, RoundedCornerShape(14.dp)).padding(8.dp), contentAlignment = Alignment.Center) {
                     if (bitmap != null) Image(bitmap = bitmap, contentDescription = image.name, modifier = Modifier.fillMaxWidth().heightIn(max = 430.dp), contentScale = ContentScale.Fit)
-                    else Text("无法预览图片", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    else Text(localized("无法预览图片", "Cannot preview image"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -2264,7 +2272,16 @@ private fun String.endsWithAny(vararg suffixes: String): Boolean = suffixes.any 
 
 @Composable
 private fun WelcomePrompts(onPrompt: (String) -> Unit) {
-    ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) { Text("准备好开始了吗？", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black); Text("像 Claude 一样自然地描述任务。BoxedAgent 会整合上下文、文件和工具调用。", color = MaterialTheme.colorScheme.onSurfaceVariant); Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("请快速了解这个 workspace 的结构，并给我一个简短总结。" to "总结 workspace", "请运行必要检查，找出当前项目最值得改进的地方。" to "检查项目", "请帮我实现一个小改动，并说明测试方式。" to "实现改动").forEach { (p, label) -> AssistChip(onClick = { onPrompt(p) }, label = { Text(label) }) } } } }
+    val prompts = if (LocalAppStrings.current === EnStrings) listOf(
+        "Please inspect this workspace and summarize it briefly." to "Summarize",
+        "Please run the necessary checks and identify the best improvements." to "Check project",
+        "Please implement a small change and explain how to test it." to "Implement"
+    ) else listOf(
+        "请快速了解这个 workspace 的结构，并给我一个简短总结。" to "总结 workspace",
+        "请运行必要检查，找出当前项目最值得改进的地方。" to "检查项目",
+        "请帮我实现一个小改动，并说明测试方式。" to "实现改动"
+    )
+    ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) { Text(localized("准备好开始了吗？", "Ready to start?"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black); Text(localized("描述任务即可开始。", "Describe a task to begin."), color = MaterialTheme.colorScheme.onSurfaceVariant); Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) { prompts.forEach { (p, label) -> AssistChip(onClick = { onPrompt(p) }, label = { Text(label) }) } } } }
 }
 
 @Composable
@@ -2298,7 +2315,7 @@ private fun ToolsScreen(state: AppUiState, viewModel: AppViewModel) {
 @Composable
 private fun TerminalTab(state: AppUiState, viewModel: AppViewModel) {
     val activeBox = state.activeBox
-    if (activeBox == null) { CenterWelcome("请选择 Box", "Shell 会连接到 Box 内 /workspace。") ; return }
+    if (activeBox == null) { CenterWelcome(localized("请选择 Box", "Select a box"), localized("Shell 连接到 /workspace。", "Shell opens at /workspace.")) ; return }
     val context = LocalContext.current
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).padding(14.dp),
@@ -2311,12 +2328,12 @@ private fun TerminalTab(state: AppUiState, viewModel: AppViewModel) {
                         Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.padding(10.dp).size(24.dp))
                     }
                     Column(Modifier.weight(1f)) {
-                        Text("独立终端", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text(localized("独立终端", "Terminal"), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                         Text(activeBox.name, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     StatusChip(activeBox.status)
                 }
-                Text("为避免 Termux 终端 View 与 Compose / 输入法布局冲突，Shell 现在在独立页面中打开。终端页面会自动连接当前 Box 的 /workspace，并提供手机快捷键栏。", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                Text(localized("在独立页面打开 Shell。", "Open the shell in a separate screen."), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                 Button(
                     onClick = {
                         context.startActivity(Intent(context, TerminalActivity::class.java).apply {
@@ -2330,14 +2347,14 @@ private fun TerminalTab(state: AppUiState, viewModel: AppViewModel) {
                 ) {
                     Icon(Icons.Rounded.OpenInNew, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("打开 ${activeBox.name} Shell")
+                    Text("${localized("打开", "Open")} ${activeBox.name} Shell")
                 }
             }
         }
         ElevatedCard(Modifier.fillMaxWidth(), colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("快捷键", fontWeight = FontWeight.Bold)
-                Text("独立终端底部保留 ESC、TAB、CTRL、ALT、方向键、PGUP/PGDN、C-C、C-D、C-Z、粘贴与清屏。输入法弹出时由独立 Activity 的原生布局处理，不影响 Chat 输入框。", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                Text(localized("快捷键", "Shortcuts"), fontWeight = FontWeight.Bold)
+                Text("ESC · TAB · CTRL · ALT · arrows · paste", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
             }
         }
     }
@@ -2455,7 +2472,7 @@ private data class TerminalKey(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
-    if (state.activeBox == null) { CenterWelcome("请选择 Box", "文件浏览器支持上传、下载、新建目录与删除。") ; return }
+    if (state.activeBox == null) { CenterWelcome(localized("请选择 Box", "Select a box"), localized("浏览和管理 workspace 文件。", "Browse workspace files.")) ; return }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
@@ -2480,6 +2497,15 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
             loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it })
         }
     }
+    val previewTitle = localized("预览", "Preview")
+    val previewNoApp = localized("没有可打开此文件的应用", "No app can open this file")
+    val previewCannotOpen = localized("无法打开预览", "Cannot open preview")
+    val previewCanceled = localized("已取消预览下载", "Preview download canceled")
+    val previewFailed = localized("预览失败", "Preview failed")
+    val selectSessionFirst = localized("请先选择 Session", "Select a session first")
+    val attachedText = localized("已附加", "Attached")
+    val invalidNameText = localized("名称不能包含 /、\\ 或 ..", "Name cannot contain /, \\ or ..")
+    val pathCopiedText = localized("已复制路径", "Path copied")
     DisposableEffect(Unit) { onDispose { previewJob?.cancel() } }
     fun reload() { scope.launch { loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) } }
     fun beginPreviewDownload(entry: FileEntry) {
@@ -2491,13 +2517,13 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
                     previewDownload = PreviewDownloadState(entry = entry, bytesRead = read, totalBytes = total.takeIf { it > 0 } ?: entry.size.takeIf { it > 0 } ?: -1L)
                 }
                 previewDownload = null
-                context.openCachedPreview(cached) { viewModel.emit(it) }
+                context.openCachedPreview(cached, previewTitle, previewNoApp, previewCannotOpen) { viewModel.emit(it) }
             } catch (e: CancellationException) {
                 previewDownload = null
-                viewModel.emit("已取消预览下载")
+                viewModel.emit(previewCanceled)
             } catch (e: Exception) {
                 previewDownload = null
-                viewModel.emit("预览失败：${e.message}")
+                viewModel.emit("$previewFailed: ${e.message}")
             }
         }
     }
@@ -2506,11 +2532,11 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
     }
     fun attach(entry: FileEntry) {
         if (state.activeSessionId == null) {
-            viewModel.emit("请先选择 Session")
+            viewModel.emit(selectSessionFirst)
             return
         }
         viewModel.insertIntoComposer(fileRef(workspaceAbsPath(entry.path)))
-        viewModel.emit("已附加 ${entry.name}")
+        viewModel.emit("$attachedText ${entry.name}")
     }
     fun createTargetPath(name: String): String = if (path == "." || path.isBlank()) name else "$path/$name"
     val normalizedPath = normalizeFileBrowserPath(path)
@@ -2539,12 +2565,12 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            FilledTonalIconButton(onClick = { path = parentPath(path) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.ArrowUpward, contentDescription = "上级", modifier = Modifier.size(19.dp)) }
-            FilledTonalIconButton(onClick = { reload() }, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.Refresh, contentDescription = "刷新", modifier = Modifier.size(19.dp)) }
-            FilledTonalIconButton(onClick = { showBookmarksPanel = !showBookmarksPanel }, modifier = Modifier.size(36.dp)) { Icon(if (currentBookmarked) Icons.Rounded.BookmarkAdded else Icons.Rounded.Bookmarks, contentDescription = "书签", modifier = Modifier.size(19.dp), tint = if (currentBookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSecondaryContainer) }
-            FilledTonalButton(onClick = { pickUpload.launch(arrayOf("*/*")) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) { Icon(Icons.Rounded.Upload, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("上传", fontSize = 13.sp) }
-            OutlinedButton(onClick = { createKind = "file"; createName = "" }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) { Icon(Icons.Rounded.NoteAdd, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("文件", fontSize = 13.sp) }
-            OutlinedButton(onClick = { createKind = "dir"; createName = "" }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) { Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("目录", fontSize = 13.sp) }
+            FilledTonalIconButton(onClick = { path = parentPath(path) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.ArrowUpward, contentDescription = localized("上级", "Up"), modifier = Modifier.size(19.dp)) }
+            FilledTonalIconButton(onClick = { reload() }, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.Refresh, contentDescription = localized("刷新", "Refresh"), modifier = Modifier.size(19.dp)) }
+            FilledTonalIconButton(onClick = { showBookmarksPanel = !showBookmarksPanel }, modifier = Modifier.size(36.dp)) { Icon(if (currentBookmarked) Icons.Rounded.BookmarkAdded else Icons.Rounded.Bookmarks, contentDescription = localized("书签", "Bookmarks"), modifier = Modifier.size(19.dp), tint = if (currentBookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSecondaryContainer) }
+            FilledTonalButton(onClick = { pickUpload.launch(arrayOf("*/*")) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) { Icon(Icons.Rounded.Upload, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text(localized("上传", "Upload"), fontSize = 13.sp) }
+            OutlinedButton(onClick = { createKind = "file"; createName = "" }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) { Icon(Icons.Rounded.NoteAdd, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text(localized("文件", "File"), fontSize = 13.sp) }
+            OutlinedButton(onClick = { createKind = "dir"; createName = "" }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) { Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text(localized("目录", "Folder"), fontSize = 13.sp) }
         }
         Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = RoundedCornerShape(10.dp)) {
             Row(Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2565,11 +2591,11 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
             Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(10.dp), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(if (kind == "dir") Icons.Rounded.CreateNewFolder else Icons.Rounded.NoteAdd, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    OutlinedTextField(createName, { createName = it }, label = { Text(if (kind == "dir") "目录名" else "文件名") }, singleLine = true, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { createKind = null; createName = "" }) { Text("取消") }
+                    OutlinedTextField(createName, { createName = it }, label = { Text(if (kind == "dir") localized("目录名", "Folder name") else localized("文件名", "File name")) }, singleLine = true, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { createKind = null; createName = "" }) { Text(localized("取消", "Cancel")) }
                     Button(onClick = {
                         val name = createName.trim()
-                        if (!isSafeFileName(name)) { error = "名称不能包含 /、\\ 或 .."; return@Button }
+                        if (!isSafeFileName(name)) { error = invalidNameText; return@Button }
                         scope.launch {
                             error = null
                             runCatching {
@@ -2579,7 +2605,7 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
                                 if (kind == "dir") path = target else loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it })
                             }.onFailure { error = it.message }
                         }
-                    }, enabled = createName.isNotBlank()) { Text("创建") }
+                    }, enabled = createName.isNotBlank()) { Text(localized("创建", "Create")) }
                 }
             }
         }
@@ -2596,27 +2622,27 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
                         onMore = { actionEntry = entry }
                     )
                 }
-                if (!loading && entries.isEmpty()) item { Text("空目录", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if (!loading && entries.isEmpty()) item { Text(localized("空目录", "Empty folder"), Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         }
     }
     actionEntry?.let { entry ->
         ModalBottomSheet(onDismissRequest = { actionEntry = null }) {
             SheetHeader(if (entry.type == "directory") Icons.Rounded.Folder else Icons.Rounded.Description, entry.name, workspaceAbsPath(entry.path))
-            if (entry.type == "directory") ListItem(headlineContent = { Text("打开目录") }, leadingContent = { Icon(Icons.Rounded.FolderOpen, contentDescription = null) }, modifier = Modifier.clickable { path = entry.path; actionEntry = null })
+            if (entry.type == "directory") ListItem(headlineContent = { Text(localized("打开目录", "Open folder")) }, leadingContent = { Icon(Icons.Rounded.FolderOpen, contentDescription = null) }, modifier = Modifier.clickable { path = entry.path; actionEntry = null })
             if (entry.type == "directory") {
                 val bookmarked = bookmarks.contains(normalizeFileBrowserPath(entry.path))
-                ListItem(headlineContent = { Text(if (bookmarked) "移除目录书签" else "添加到书签") }, leadingContent = { Icon(if (bookmarked) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd, contentDescription = null) }, modifier = Modifier.clickable { toggleBookmark(entry.path); actionEntry = null })
+                ListItem(headlineContent = { Text(if (bookmarked) localized("移除书签", "Remove bookmark") else localized("添加到书签", "Add bookmark")) }, leadingContent = { Icon(if (bookmarked) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd, contentDescription = null) }, modifier = Modifier.clickable { toggleBookmark(entry.path); actionEntry = null })
             }
-            if (entry.type == "file") ListItem(headlineContent = { Text("预览打开") }, supportingContent = { Text("下载到应用缓存后使用本机应用打开") }, leadingContent = { Icon(Icons.Rounded.Visibility, contentDescription = null) }, modifier = Modifier.clickable { actionEntry = null; requestPreview(entry) })
-            if (entry.type == "file") ListItem(headlineContent = { Text("快速附加到消息") }, supportingContent = { Text(fileRef(workspaceAbsPath(entry.path))) }, leadingContent = { Icon(Icons.Rounded.AttachFile, contentDescription = null) }, modifier = Modifier.clickable { attach(entry); actionEntry = null })
-            ListItem(headlineContent = { Text("复制路径") }, supportingContent = { Text(workspaceAbsPath(entry.path)) }, leadingContent = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }, modifier = Modifier.clickable { clipboard.setText(AnnotatedString(workspaceAbsPath(entry.path))); actionEntry = null; viewModel.emit("已复制路径") })
-            if (entry.type == "file") ListItem(headlineContent = { Text("下载") }, leadingContent = { Icon(Icons.Rounded.Download, contentDescription = null) }, modifier = Modifier.clickable { scope.launch { val file = viewModel.downloadFile(entry.path); pendingDownload = file; createDoc.launch(file.name) }; actionEntry = null })
-            ListItem(headlineContent = { Text("删除", color = MaterialTheme.colorScheme.error) }, leadingContent = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) }, modifier = Modifier.clickable { deleteEntry = entry; actionEntry = null })
+            if (entry.type == "file") ListItem(headlineContent = { Text(localized("预览打开", "Preview")) }, supportingContent = { Text(localized("下载到缓存后打开", "Download to cache and open")) }, leadingContent = { Icon(Icons.Rounded.Visibility, contentDescription = null) }, modifier = Modifier.clickable { actionEntry = null; requestPreview(entry) })
+            if (entry.type == "file") ListItem(headlineContent = { Text(localized("附加到消息", "Attach to message")) }, supportingContent = { Text(fileRef(workspaceAbsPath(entry.path))) }, leadingContent = { Icon(Icons.Rounded.AttachFile, contentDescription = null) }, modifier = Modifier.clickable { attach(entry); actionEntry = null })
+            ListItem(headlineContent = { Text(localized("复制路径", "Copy path")) }, supportingContent = { Text(workspaceAbsPath(entry.path)) }, leadingContent = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }, modifier = Modifier.clickable { clipboard.setText(AnnotatedString(workspaceAbsPath(entry.path))); actionEntry = null; viewModel.emit(pathCopiedText) })
+            if (entry.type == "file") ListItem(headlineContent = { Text(localized("下载", "Download")) }, leadingContent = { Icon(Icons.Rounded.Download, contentDescription = null) }, modifier = Modifier.clickable { scope.launch { val file = viewModel.downloadFile(entry.path); pendingDownload = file; createDoc.launch(file.name) }; actionEntry = null })
+            ListItem(headlineContent = { Text(localized("删除", "Delete"), color = MaterialTheme.colorScheme.error) }, leadingContent = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) }, modifier = Modifier.clickable { deleteEntry = entry; actionEntry = null })
             Spacer(Modifier.height(18.dp))
         }
     }
-    deleteEntry?.let { entry -> ConfirmDialog("删除 ${entry.name}", "确定删除 ${workspaceAbsPath(entry.path)}？", onDismiss = { deleteEntry = null }, onConfirm = { scope.launch { viewModel.deleteFile(entry.path); deleteEntry = null; loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) } }) }
+    deleteEntry?.let { entry -> ConfirmDialog(localized("删除", "Delete") + " ${entry.name}", localized("确定删除", "Delete") + " ${workspaceAbsPath(entry.path)}?", onDismiss = { deleteEntry = null }, onConfirm = { scope.launch { viewModel.deleteFile(entry.path); deleteEntry = null; loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) } }) }
     largePreviewEntry?.let { entry ->
         LargeFilePreviewDialog(
             entry = entry,
@@ -2642,16 +2668,16 @@ private fun FileBookmarksPanel(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Icons.Rounded.Bookmarks, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("书签", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Text("快速跳转常用目录", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                    Text(localized("书签", "Bookmarks"), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(localized("快速跳转", "Quick folders"), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
                 }
                 TextButton(onClick = onToggleCurrent, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
                     Icon(if (bookmarks.contains(currentPath)) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd, contentDescription = null, modifier = Modifier.size(15.dp))
-                    Text(if (bookmarks.contains(currentPath)) "移除当前" else "添加当前", fontSize = 12.sp)
+                    Text(if (bookmarks.contains(currentPath)) localized("移除当前", "Remove current") else localized("添加当前", "Add current"), fontSize = 12.sp)
                 }
             }
             if (bookmarks.isEmpty()) {
-                Text("还没有书签，点击“添加当前”收藏当前目录。", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(vertical = 6.dp))
+                Text(localized("还没有书签。", "No bookmarks yet."), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(vertical = 6.dp))
             } else {
                 Column(Modifier.fillMaxWidth().heightIn(max = 220.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     bookmarks.forEach { bookmark ->
@@ -2667,7 +2693,7 @@ private fun FileBookmarksPanel(
                                     Text(bookmarkLabel(bookmark), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(workspaceAbsPath(bookmark), fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = LocalContentColor.current.copy(alpha = .72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
-                                IconButton(onClick = { onRemove(bookmark) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.Close, contentDescription = "移除书签", modifier = Modifier.size(16.dp)) }
+                                IconButton(onClick = { onRemove(bookmark) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.Close, contentDescription = localized("移除书签", "Remove bookmark"), modifier = Modifier.size(16.dp)) }
                             }
                         }
                     }
@@ -2689,10 +2715,10 @@ private data class PreviewDownloadState(val entry: FileEntry, val bytesRead: Lon
 private fun LargeFilePreviewDialog(entry: FileEntry, onDismiss: () -> Unit, onConfirm: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { Button(onClick = onConfirm) { Text("继续预览") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-        title = { Text("预览大文件？") },
-        text = { Text("${entry.name} 大小为 ${formatBytes(entry.size)}。预览需要先下载到应用缓存，可能消耗流量与时间。") }
+        confirmButton = { Button(onClick = onConfirm) { Text(localized("继续", "Continue")) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } },
+        title = { Text(localized("预览大文件？", "Preview large file?")) },
+        text = { Text("${entry.name} · ${formatBytes(entry.size)}") }
     )
 }
 
@@ -2703,14 +2729,14 @@ private fun PreviewDownloadDialog(progress: PreviewDownloadState, onCancel: () -
     AlertDialog(
         onDismissRequest = {},
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onCancel) { Text("取消下载") } },
-        title = { Text("正在准备预览") },
+        dismissButton = { TextButton(onClick = onCancel) { Text(localized("取消下载", "Cancel")) } },
+        title = { Text(localized("正在准备预览", "Preparing preview")) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(progress.entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 if (fraction != null) LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth()) else LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(
-                    if (total > 0) "${formatBytes(progress.bytesRead)} / ${formatBytes(total)}" else "已下载 ${formatBytes(progress.bytesRead)}",
+                    if (total > 0) "${formatBytes(progress.bytesRead)} / ${formatBytes(total)}" else localized("已下载", "Downloaded") + " ${formatBytes(progress.bytesRead)}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp
                 )
@@ -2719,15 +2745,15 @@ private fun PreviewDownloadDialog(progress: PreviewDownloadState, onCancel: () -
     )
 }
 
-private fun Context.openCachedPreview(file: CachedPreviewFile, onError: (String) -> Unit) {
+private fun Context.openCachedPreview(file: CachedPreviewFile, titlePrefix: String, noAppMessage: String, fallbackError: String, onError: (String) -> Unit) {
     val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file.file)
     val mimeType = previewMimeType(file.name, file.mimeType)
     val intent = Intent(Intent.ACTION_VIEW)
         .setDataAndType(uri, mimeType)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    runCatching { startActivity(Intent.createChooser(intent, "预览 ${file.name}")) }
+    runCatching { startActivity(Intent.createChooser(intent, "$titlePrefix ${file.name}")) }
         .onFailure { e ->
-            val message = if (e is ActivityNotFoundException) "没有可打开 ${file.name} 的应用" else (e.message ?: "无法打开预览")
+            val message = if (e is ActivityNotFoundException) noAppMessage else (e.message ?: fallbackError)
             onError(message)
         }
 }
@@ -2765,9 +2791,9 @@ private fun FileRow(entry: FileEntry, onOpen: () -> Unit, onAttach: () -> Unit, 
                 Text(workspaceAbsPath(entry.path), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, fontFamily = FontFamily.Monospace)
             }
             Text(if (entry.type == "file") formatBytes(entry.size) else "dir", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(76.dp), maxLines = 1)
-            if (entry.type == "file") IconButton(onClick = onAttach, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.AttachFile, contentDescription = "快速附加", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) }
+            if (entry.type == "file") IconButton(onClick = onAttach, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.AttachFile, contentDescription = localized("附加", "Attach"), modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary) }
             else Spacer(Modifier.width(34.dp))
-            IconButton(onClick = onMore, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.MoreVert, contentDescription = "文件操作", modifier = Modifier.size(18.dp)) }
+            IconButton(onClick = onMore, modifier = Modifier.size(34.dp)) { Icon(Icons.Rounded.MoreVert, contentDescription = localized("文件操作", "File actions"), modifier = Modifier.size(18.dp)) }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
     }
@@ -2778,7 +2804,7 @@ private fun isSafeFileName(name: String): Boolean = name.isNotBlank() && '/' !in
 @Composable
 private fun PiSettingsTab(state: AppUiState, viewModel: AppViewModel) {
     val activeBox = state.activeBox
-    if (activeBox == null) { CenterWelcome("请选择 Box", "Pi 配置为每个 Box 独立保存。") ; return }
+    if (activeBox == null) { CenterWelcome(localized("请选择 Box", "Select a box"), localized("配置当前 Box 的 Pi。", "Configure Pi for this box.")) ; return }
     val scope = rememberCoroutineScope()
     var provider by remember(state.activeBoxId) { mutableStateOf("") }
     var model by remember(state.activeBoxId) { mutableStateOf("") }
@@ -2793,14 +2819,15 @@ private fun PiSettingsTab(state: AppUiState, viewModel: AppViewModel) {
     var materialized by remember(state.activeBoxId) { mutableStateOf("/workspace/.boxedagent/pi-agent") }
     var error by remember { mutableStateOf<String?>(null) }
     var ok by remember { mutableStateOf<String?>(null) }
+    val savedText = localized("已保存", "Saved")
     LaunchedEffect(state.activeBoxId) { runCatching { viewModel.getPiConfig() }.onSuccess { cfg -> provider = cfg.pi.defaultProvider.orEmpty(); model = cfg.pi.defaultModel.orEmpty(); thinking = cfg.pi.defaultThinkingLevel ?: "medium"; enabledModels = cfg.pi.enabledModels.joinToString(", "); settingsText = cfg.pi.settingsJson?.let { UiJson.encodeToString(it) } ?: "{}"; modelsText = cfg.pi.modelsJson?.let { UiJson.encodeToString(it) } ?: "{}"; envText = UiJson.encodeToString(cfg.env); systemPrompt = cfg.pi.systemPrompt.orEmpty(); appendSystem = cfg.pi.appendSystemPrompt.orEmpty(); agentsMd = cfg.pi.agentsMd.orEmpty(); materialized = cfg.materialized.piCodingAgentDir }.onFailure { error = it.message } }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp)) { Text("Pi 配置 · ${activeBox.name}", fontWeight = FontWeight.Bold); Text("PI_CODING_AGENT_DIR：$materialized", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
+        item { ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp)) { Text("Pi config · ${activeBox.name}", fontWeight = FontWeight.Bold); Text("PI_CODING_AGENT_DIR: $materialized", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
         item { error?.let { Text(it, color = MaterialTheme.colorScheme.error) }; ok?.let { Text(it, color = Color(0xFF4ADE80)) } }
-        item { SettingsCard("模型与运行参数") { OutlinedTextField(provider, { provider = it }, label = { Text("默认 Provider") }, singleLine = true, modifier = Modifier.fillMaxWidth()); OutlinedTextField(model, { model = it }, label = { Text("默认 Model") }, singleLine = true, modifier = Modifier.fillMaxWidth()); DropdownField("Thinking", thinking, ThinkingLevels, { thinking = it }); OutlinedTextField(enabledModels, { enabledModels = it }, label = { Text("enabledModels（逗号分隔）") }, singleLine = true, modifier = Modifier.fillMaxWidth()) } }
-        item { SettingsCard("JSON 配置") { CodeTextField("环境变量 JSON", envText, { envText = it }); CodeTextField("models.json", modelsText, { modelsText = it }); CodeTextField("settings.json 额外配置", settingsText, { settingsText = it }) } }
-        item { SettingsCard("Prompt 与项目上下文") { CodeTextField("SYSTEM.md", systemPrompt, { systemPrompt = it }); CodeTextField("APPEND_SYSTEM.md", appendSystem, { appendSystem = it }); CodeTextField("AGENTS.md", agentsMd, { agentsMd = it }) } }
-        item { Button(onClick = { scope.launch { error = null; ok = null; runCatching { parseObject(settingsText); parseObject(modelsText); val env = parseEnv(envText); viewModel.updatePiConfig(PiConfigUpdateRequest(defaultProvider = provider.ifBlank { null }, defaultModel = model.ifBlank { null }, defaultThinkingLevel = thinking, enabledModels = enabledModels.split(',').map { it.trim() }.filter { it.isNotBlank() }, settingsJsonText = settingsText, modelsJsonText = modelsText, systemPrompt = systemPrompt, appendSystemPrompt = appendSystem, agentsMd = agentsMd, env = env)) }.onSuccess { ok = "已保存并写入 Box workspace；运行中的 Session 建议重启。" }.onFailure { error = it.message } } }, modifier = Modifier.fillMaxWidth()) { Text("保存 Pi 配置") } }
+        item { SettingsCard(localized("模型与运行参数", "Model and runtime")) { OutlinedTextField(provider, { provider = it }, label = { Text(localized("默认 Provider", "Default provider")) }, singleLine = true, modifier = Modifier.fillMaxWidth()); OutlinedTextField(model, { model = it }, label = { Text(localized("默认 Model", "Default model")) }, singleLine = true, modifier = Modifier.fillMaxWidth()); DropdownField("Thinking", thinking, ThinkingLevels, { thinking = it }); OutlinedTextField(enabledModels, { enabledModels = it }, label = { Text("enabledModels") }, singleLine = true, modifier = Modifier.fillMaxWidth()) } }
+        item { SettingsCard(localized("JSON 配置", "JSON config")) { CodeTextField(localized("环境变量 JSON", "Env JSON"), envText, { envText = it }); CodeTextField("models.json", modelsText, { modelsText = it }); CodeTextField(localized("settings.json 额外配置", "Extra settings.json"), settingsText, { settingsText = it }) } }
+        item { SettingsCard(localized("Prompt 与项目上下文", "Prompts and context")) { CodeTextField("SYSTEM.md", systemPrompt, { systemPrompt = it }); CodeTextField("APPEND_SYSTEM.md", appendSystem, { appendSystem = it }); CodeTextField("AGENTS.md", agentsMd, { agentsMd = it }) } }
+        item { Button(onClick = { scope.launch { error = null; ok = null; runCatching { parseObject(settingsText); parseObject(modelsText); val env = parseEnv(envText); viewModel.updatePiConfig(PiConfigUpdateRequest(defaultProvider = provider.ifBlank { null }, defaultModel = model.ifBlank { null }, defaultThinkingLevel = thinking, enabledModels = enabledModels.split(',').map { it.trim() }.filter { it.isNotBlank() }, settingsJsonText = settingsText, modelsJsonText = modelsText, systemPrompt = systemPrompt, appendSystemPrompt = appendSystem, agentsMd = agentsMd, env = env)) }.onSuccess { ok = savedText }.onFailure { error = it.message } } }, modifier = Modifier.fillMaxWidth()) { Text(localized("保存 Pi 配置", "Save Pi config")) } }
     }
 }
 
@@ -2812,7 +2839,7 @@ private fun CodeTextField(label: String, value: String, onValue: (String) -> Uni
 @Composable
 private fun CodeServerTab(state: AppUiState, viewModel: AppViewModel) {
     val activeBox = state.activeBox
-    if (activeBox == null) { CenterWelcome("请选择 Box", "code-server 通过 BoxedAgent 反向代理访问。") ; return }
+    if (activeBox == null) { CenterWelcome(localized("请选择 Box", "Select a box"), localized("打开 code-server。", "Open code-server.")) ; return }
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val url = viewModel.codeServerUrl().orEmpty()
@@ -2823,12 +2850,12 @@ private fun CodeServerTab(state: AppUiState, viewModel: AppViewModel) {
         ElevatedCard(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("code-server", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("内嵌 WebView 通过 BoxedAgent 反向代理访问。默认密码：${activeBox.codeServerPassword ?: "boxedagent"}。首次启动可能需要数秒。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(localized("默认密码", "Default password") + ": ${activeBox.codeServerPassword ?: "boxedagent"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { webKey++ }) { Text("刷新") }
-                    OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }) { Text("外部浏览器") }
-                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(url)) }) { Text("复制 URL") }
-                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(viewModel.bearerToken())) }) { Text("复制 Token") }
+                    Button(onClick = { webKey++ }) { Text(localized("刷新", "Refresh")) }
+                    OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }) { Text(localized("外部浏览器", "Browser")) }
+                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(url)) }) { Text(localized("复制 URL", "Copy URL")) }
+                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(viewModel.bearerToken())) }) { Text(localized("复制 Token", "Copy token")) }
                 }
             }
         }
@@ -2859,7 +2886,7 @@ private fun CodeServerTab(state: AppUiState, viewModel: AppViewModel) {
 
 private fun parseObject(text: String): JsonObject {
     val parsed = UiJson.parseToJsonElement(text.ifBlank { "{}" })
-    return parsed as? JsonObject ?: error("必须是 JSON 对象")
+    return parsed as? JsonObject ?: error("Must be a JSON object")
 }
 private fun parseEnv(text: String): Map<String, String> = parseObject(text).mapValues { it.value.jsonPrimitive.contentOrNull ?: it.value.toString() }
 private fun normalizeFileBrowserPath(value: String): String {
