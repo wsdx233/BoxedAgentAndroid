@@ -1663,7 +1663,7 @@ private fun fileIconForPath(path: String): ToolFileIconData {
         "pdf" -> fileIcon(Icons.Rounded.PictureAsPdf, "PDF")
         "mp4", "mov", "mkv", "webm" -> fileIcon(Icons.Rounded.Movie, "Video")
         "mp3", "wav", "m4a", "flac", "ogg" -> fileIcon(Icons.Rounded.AudioFile, "Audio")
-        "ts", "mts", "cts", "tsx", "py", "pyw", "ipynb", "kt", "kts", "java", "go", "rs", "rb", "cs", "swift", "dart", "scala", "groovy", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "vue", "svelte", "astro", "lua", "r", "ex", "exs" -> fileIcon(Icons.Rounded.LogoDev, "Source code")
+        "ts", "mts", "cts", "tsx", "py", "pyw", "ipynb", "kt", "kts", "java", "go", "rs", "rb", "cs", "swift", "dart", "scala", "groovy", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "vue", "svelte", "astro", "lua", "r", "ex", "exs" -> fileIcon(Icons.Rounded.Code, "Source code")
         else -> fileIcon(Icons.Rounded.Description, "File")
     }
 }
@@ -1675,7 +1675,7 @@ private fun specialFileIcon(name: String): ToolFileIconData? = when {
     name.startsWith(".git") -> fileIcon(Icons.Rounded.Commit, "Git")
     name in setOf("package.json", "package-lock.json", "pnpm-lock.yaml", "pnpm-lock.yml", "yarn.lock") -> fileIcon(Icons.Rounded.DataObject, "Node package")
     name.startsWith("tsconfig") && name.endsWith(".json") -> fileIcon(Icons.Rounded.DataObject, "TypeScript config")
-    name in setOf("go.mod", "go.sum", "cargo.toml", "cargo.lock", "rust-toolchain", "requirements.txt", "pyproject.toml", "poetry.lock", "pdm.lock", "pom.xml") -> fileIcon(Icons.Rounded.LogoDev, "Project file")
+    name in setOf("go.mod", "go.sum", "cargo.toml", "cargo.lock", "rust-toolchain", "requirements.txt", "pyproject.toml", "poetry.lock", "pdm.lock", "pom.xml") -> fileIcon(Icons.Rounded.Code, "Project file")
     else -> null
 }
 
