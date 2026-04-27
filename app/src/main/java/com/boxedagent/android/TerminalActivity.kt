@@ -125,20 +125,27 @@ class TerminalActivity : Activity() {
     private fun buildExtraKeys(): LinearLayout {
         val keys = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(4), dp(4), dp(4), dp(4))
-            setBackgroundColor(Color.rgb(36, 37, 43))
+            setPadding(dp(4), dp(3), dp(4), dp(3))
+            setBackgroundColor(Color.rgb(45, 45, 45))
         }
         keys.addView(keyRow(listOf(
-            Key("ESC", "\u001b"), Key("TAB", "\t"), Key("CTRL", special = SpecialKey.CTRL), Key("ALT", special = SpecialKey.ALT),
-            Key("/", "/"), Key("-", "-"), Key("|", "|"), Key("~", "~")
+            Key("ESC", "\u001b"),
+            Key("/", "/"),
+            Key("—", "-"),
+            Key("HOME", "\u001b[H"),
+            Key("↑", "\u001b[A"),
+            Key("END", "\u001b[F"),
+            Key("PGUP", "\u001b[5~"),
         )))
+        keys.addView(View(this), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(3)))
         keys.addView(keyRow(listOf(
-            Key("HOME", "\u001b[H"), Key("↑", "\u001b[A"), Key("END", "\u001b[F"), Key("PGUP", "\u001b[5~"),
-            Key("←", "\u001b[D"), Key("↓", "\u001b[B"), Key("→", "\u001b[C"), Key("PGDN", "\u001b[6~")
-        )))
-        keys.addView(keyRow(listOf(
-            Key("C-C", ctrl = 'c'), Key("C-D", ctrl = 'd'), Key("C-Z", ctrl = 'z'), Key("BKSP", "\u007f"),
-            Key("ENTER", "\r"), Key("PASTE", special = SpecialKey.PASTE), Key("CLEAR", special = SpecialKey.CLEAR)
+            Key("⇥", "\t"),
+            Key("CTRL", special = SpecialKey.CTRL),
+            Key("ALT", special = SpecialKey.ALT),
+            Key("←", "\u001b[D"),
+            Key("↓", "\u001b[B"),
+            Key("→", "\u001b[C"),
+            Key("PGDN", "\u001b[6~"),
         )))
         return keys
     }
@@ -146,13 +153,13 @@ class TerminalActivity : Activity() {
     private fun keyRow(keys: List<Key>): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER
-        keys.forEachIndexed { index, key ->
+        keys.forEach { key ->
             val view = keyButton(key.label) { handleKey(key) }
             if (key.special == SpecialKey.CTRL) ctrlKey = view
             if (key.special == SpecialKey.ALT) altKey = view
-            addView(view, LinearLayout.LayoutParams(0, dp(34), 1f).apply {
-                if (index > 0) leftMargin = dp(4)
-                topMargin = dp(3)
+            addView(view, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
+                marginStart = dp(1)
+                marginEnd = dp(1)
             })
         }
     }
@@ -161,8 +168,6 @@ class TerminalActivity : Activity() {
         when {
             key.special == SpecialKey.CTRL -> { ctrlActive = !ctrlActive; updateModifierKeys() }
             key.special == SpecialKey.ALT -> { altActive = !altActive; updateModifierKeys() }
-            key.special == SpecialKey.PASTE -> terminalView.pasteFromClipboard()
-            key.special == SpecialKey.CLEAR -> terminalView.clearScreen()
             key.ctrl != null -> terminalView.sendCtrl(key.ctrl)
             else -> terminalView.sendSequence(key.sequence)
         }
@@ -242,23 +247,23 @@ class TerminalActivity : Activity() {
     private fun keyButton(text: String, onClick: () -> Unit): TextView = TextView(this).apply {
         this.text = text
         textSize = 12f
-        setTextColor(Color.rgb(236, 230, 240))
+        setTextColor(Color.WHITE)
         gravity = Gravity.CENTER
         typeface = Typeface.MONOSPACE
         background = keyBackground(false)
         setOnClickListener { onClick() }
     }
 
-    private fun keyBackground(active: Boolean, radius: Float = 7f): GradientDrawable = GradientDrawable().apply {
+    private fun keyBackground(active: Boolean, radius: Float = 4f): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
         cornerRadius = dp(radius.toInt()).toFloat()
-        setColor(if (active) Color.rgb(103, 80, 164) else Color.rgb(58, 59, 66))
+        setColor(if (active) Color.rgb(92, 107, 192) else Color.rgb(66, 66, 66))
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private data class Key(val label: String, val sequence: String = "", val special: SpecialKey? = null, val ctrl: Char? = null)
-    private enum class SpecialKey { CTRL, ALT, PASTE, CLEAR }
+    private enum class SpecialKey { CTRL, ALT }
 
     companion object {
         const val EXTRA_BASE_URL = "baseUrl"
