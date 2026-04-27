@@ -30,8 +30,10 @@ import java.io.File
 import java.util.Base64
 
 private const val DEFAULT_BASE_URL = "http://10.0.2.2:8080"
+private const val ASSISTANT_STREAM_FLUSH_MS = 64L
 
 private val vmJson = Json { ignoreUnknownKeys = true; explicitNulls = false; isLenient = true }
+private data class AssistantDeltaBuffer(val text: StringBuilder = StringBuilder(), val thinking: StringBuilder = StringBuilder())
 
 enum class MainPanel { Boxes, Chat, Tools, Settings }
 enum class ToolTab { Terminal, Files, Pi, CodeServer }
@@ -109,6 +111,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var boxWs: WebSocket? = null
     private var sessionWs: WebSocket? = null
     private var pollingJob: Job? = null
+    private val assistantDeltaLock = Any()
+    private val pendingAssistantDeltas = mutableMapOf<String, AssistantDeltaBuffer>()
+    private val assistantDeltaFlushJobs = mutableMapOf<String, Job>()
 
     init {
         viewModelScope.launch { connect(_state.value.baseUrl, _state.value.token, silent = true) }
@@ -352,14 +357,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun handleAgentEvent(sessionId: String, event: JsonObject) {
         when (event.string("type")) {
             "agent_start", "turn_start", "message_start" -> setTurnActive(sessionId, true)
-            "agent_end", "turn_end", "message_end" -> { setTurnActive(sessionId, false); refreshSessionRuntime(sessionId) }
+            "agent_end", "turn_end", "message_end" -> { flushAssistantDeltas(sessionId); setTurnActive(sessionId, false); refreshSessionRuntime(sessionId) }
             "message_update" -> handleMessageUpdate(sessionId, event.obj("assistantMessageEvent") ?: return)
             "tool_execution_start" -> {
+                flushAssistantDeltas(sessionId)
                 setTurnActive(sessionId, true)
                 upsertTool(sessionId, event.string("toolCallId") ?: "${event.string("toolName")}-${System.currentTimeMillis()}", event.string("toolName") ?: "tool", event["args"], null, "running")
             }
             "tool_execution_update" -> upsertTool(sessionId, event.string("toolCallId") ?: "${event.string("toolName")}-${System.currentTimeMillis()}", event.string("toolName") ?: "tool", event["args"], resultToText(event["partialResult"]), "running")
-            "tool_execution_end" -> upsertTool(sessionId, event.string("toolCallId") ?: "${event.string("toolName")}-${System.currentTimeMillis()}", event.string("toolName") ?: "tool", event["args"], resultToText(event["result"]), if (event.boolean("isError") == true) "error" else "done")
+            "tool_execution_end" -> { flushAssistantDeltas(sessionId); upsertTool(sessionId, event.string("toolCallId") ?: "${event.string("toolName")}-${System.currentTimeMillis()}", event.string("toolName") ?: "tool", event["args"], resultToText(event["result"]), if (event.boolean("isError") == true) "error" else "done") }
             "queue_update" -> _state.update { old -> old.copy(queueBySession = old.queueBySession + (sessionId to QueueState(event.arrayStrings("steering"), event.arrayStrings("followUp")))) }
             "compaction_start" -> { setTurnActive(sessionId, true); appendSystem(sessionId, "正在压缩上下文：${event.string("reason") ?: "manual"}") }
             "compaction_end" -> {
@@ -373,14 +379,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun handleMessageUpdate(sessionId: String, delta: JsonObject) {
         when (delta.string("type")) {
             "start", "text_start", "thinking_start", "toolcall_start" -> setTurnActive(sessionId, true)
-            "text_delta" -> updateLastAssistant(sessionId, delta.string("delta") ?: "")
-            "thinking_delta" -> updateLastAssistantThinking(sessionId, delta.string("delta") ?: "")
+            "text_delta" -> queueAssistantDelta(sessionId, textDelta = delta.string("delta") ?: "")
+            "thinking_delta" -> queueAssistantDelta(sessionId, thinkingDelta = delta.string("delta") ?: "")
             "toolcall_start", "toolcall_delta", "toolcall_end" -> {
+                flushAssistantDeltas(sessionId)
                 val tool = toolCallFromDelta(delta)
                 val id = tool.toolCallId ?: delta.string("id") ?: (delta.string("contentIndex") ?: "tool")
                 upsertTool(sessionId, id, tool.toolName ?: "tool", tool.toolArgs, null, "pending")
             }
-            "done", "error" -> { setTurnActive(sessionId, false); refreshSessionRuntime(sessionId) }
+            "done", "error" -> { flushAssistantDeltas(sessionId); setTurnActive(sessionId, false); refreshSessionRuntime(sessionId) }
         }
     }
 
@@ -403,22 +410,49 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun appendSystem(sessionId: String, text: String) = appendMessage(sessionId, ChatMessage(newMessageId(), "system", text, System.currentTimeMillis()))
 
-    private fun updateLastAssistant(sessionId: String, delta: String) {
-        _state.update { old ->
-            val list = old.messagesBySession[sessionId].orEmpty().toMutableList()
-            val last = list.lastOrNull()
-            if (last?.role == "assistant") list[list.lastIndex] = last.copy(text = last.text + delta)
-            else list += ChatMessage(newMessageId(), "assistant", delta, System.currentTimeMillis())
-            old.copy(messagesBySession = old.messagesBySession + (sessionId to list))
+    private fun queueAssistantDelta(sessionId: String, textDelta: String = "", thinkingDelta: String = "") {
+        if (textDelta.isEmpty() && thinkingDelta.isEmpty()) return
+        synchronized(assistantDeltaLock) {
+            val buffer = pendingAssistantDeltas.getOrPut(sessionId) { AssistantDeltaBuffer() }
+            if (textDelta.isNotEmpty()) buffer.text.append(textDelta)
+            if (thinkingDelta.isNotEmpty()) buffer.thinking.append(thinkingDelta)
+            if (assistantDeltaFlushJobs[sessionId]?.isActive != true) {
+                assistantDeltaFlushJobs[sessionId] = viewModelScope.launch {
+                    delay(ASSISTANT_STREAM_FLUSH_MS)
+                    flushAssistantDeltas(sessionId)
+                }
+            }
         }
     }
 
-    private fun updateLastAssistantThinking(sessionId: String, delta: String) {
+    private fun flushAssistantDeltas(sessionId: String) {
+        val textDelta: String
+        val thinkingDelta: String
+        synchronized(assistantDeltaLock) {
+            val buffer = pendingAssistantDeltas.remove(sessionId) ?: run {
+                assistantDeltaFlushJobs.remove(sessionId)
+                return
+            }
+            textDelta = buffer.text.toString()
+            thinkingDelta = buffer.thinking.toString()
+            assistantDeltaFlushJobs.remove(sessionId)
+        }
+        applyAssistantDeltas(sessionId, textDelta, thinkingDelta)
+    }
+
+    private fun applyAssistantDeltas(sessionId: String, textDelta: String, thinkingDelta: String) {
+        if (textDelta.isEmpty() && thinkingDelta.isEmpty()) return
         _state.update { old ->
             val list = old.messagesBySession[sessionId].orEmpty().toMutableList()
             val last = list.lastOrNull()
-            if (last?.role == "assistant") list[list.lastIndex] = last.copy(thinking = (last.thinking ?: "") + delta)
-            else list += ChatMessage(newMessageId(), "assistant", "", System.currentTimeMillis(), thinking = delta)
+            if (last?.role == "assistant") {
+                list[list.lastIndex] = last.copy(
+                    text = last.text + textDelta,
+                    thinking = if (thinkingDelta.isNotEmpty()) (last.thinking ?: "") + thinkingDelta else last.thinking
+                )
+            } else {
+                list += ChatMessage(newMessageId(), "assistant", textDelta, System.currentTimeMillis(), thinking = thinkingDelta.takeIf { it.isNotEmpty() })
+            }
             old.copy(messagesBySession = old.messagesBySession + (sessionId to list))
         }
     }

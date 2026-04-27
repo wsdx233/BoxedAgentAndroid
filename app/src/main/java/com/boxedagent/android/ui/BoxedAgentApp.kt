@@ -89,6 +89,9 @@ import kotlin.math.max
 
 private val UiJson = Json { prettyPrint = true; ignoreUnknownKeys = true; explicitNulls = false }
 private val ThinkingLevels = listOf("off", "minimal", "low", "medium", "high", "xhigh")
+private val MarkdownParagraphBreakRegex = Regex("\\n{2,}")
+private val MarkdownHeadingRegex = Regex("^(#{1,6})\\s+(.+)$")
+private val InlineMarkdownRegex = Regex("(\\*\\*[^*]+\\*\\*|`[^`]+`)")
 
 private data class AppStrings(
     val boxesTitle: String,
@@ -206,6 +209,8 @@ private val EnStrings = AppStrings(
     toolsPi = "Pi",
     toolsCode = "Code"
 )
+
+private fun ColorScheme.isDarkLike(): Boolean = background.luminance() < 0.5f || surface.luminance() < 0.5f
 
 private fun stringsFor(mode: AppLanguageMode): AppStrings = when (mode) {
     AppLanguageMode.Zh -> ZhStrings
@@ -724,6 +729,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     val lastMessage = state.activeMessages.lastOrNull()
     val latestProgressMessage = state.activeMessages.lastOrNull { it.role == "tool" || (it.role == "assistant" && it.thinking?.isNotBlank() == true) }
     val latestProgressMessageId = latestProgressMessage?.id
+    val streamingAssistantMessageId = if (state.activeTurn) state.activeMessages.lastOrNull { it.role == "assistant" }?.id else null
     val latestProgressArgsKey = latestProgressMessage?.toolArgs?.toString()?.let { "${it.length}:${it.hashCode()}" }
 
     LaunchedEffect(state.composerInsert?.id) {
@@ -734,6 +740,13 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         }
     }
 
+    val stickToBottom by remember {
+        derivedStateOf {
+            val info = listState.layoutInfo
+            val total = info.totalItemsCount
+            total == 0 || (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= total - 3
+        }
+    }
     LaunchedEffect(
         state.activeMessages.size,
         lastMessage?.id,
@@ -746,23 +759,13 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         latestProgressMessage?.toolResult?.length,
         latestProgressArgsKey,
         latestProgressMessage?.toolStatus,
-        state.activeTurn
+        state.activeTurn,
+        stickToBottom
     ) {
-        if (state.activeMessages.isNotEmpty() || state.activeTurn) {
-            repeat(8) {
-                withFrameNanos { }
-                val total = listState.layoutInfo.totalItemsCount
-                if (total > 0) listState.scrollToItem(total - 1)
-            }
-        }
-    }
-    LaunchedEffect(latestProgressMessageId, state.activeTurn) {
-        if (latestProgressMessageId != null && state.activeTurn) {
-            while (true) {
-                delay(250)
-                val total = listState.layoutInfo.totalItemsCount
-                if (total > 0) listState.scrollToItem(total - 1)
-            }
+        if ((state.activeMessages.isNotEmpty() || state.activeTurn) && stickToBottom) {
+            withFrameNanos { }
+            val total = listState.layoutInfo.totalItemsCount
+            if (total > 0) listState.scrollToItem(total - 1)
         }
     }
     LaunchedEffect(listState) {
@@ -828,6 +831,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     MessageBubble(
                         message = msg,
                         autoOpenProgress = msg.id == latestProgressMessageId,
+                        streaming = msg.id == streamingAssistantMessageId,
                         onFork = { forkDialogSession = session },
                         onShowDialog = { dialogMessage = msg.text.ifBlank { msg.toolResult.orEmpty() } }
                     )
@@ -925,7 +929,7 @@ private fun MessageDialog(text: String, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text(localized("关闭", "Close")) } },
         title = { Text(localized("消息内容", "Message")) },
-        text = { Box(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) { MarkdownishText(text) } }
+        text = { Box(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) { MarkdownishText(text, selectable = true) } }
     )
 }
 
@@ -1014,7 +1018,7 @@ private fun ProcessingCard() {
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.primary)
+            Box(Modifier.size(10.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
             Text(localized("pi 正在处理…", "pi is working…"), fontWeight = FontWeight.SemiBold)
         }
     }
@@ -1293,7 +1297,7 @@ private fun ModelDropdown(expanded: Boolean, onDismiss: () -> Unit, state: AppUi
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, autoOpenProgress: Boolean, onFork: () -> Unit, onShowDialog: () -> Unit) {
+private fun MessageBubble(message: ChatMessage, autoOpenProgress: Boolean, streaming: Boolean, onFork: () -> Unit, onShowDialog: () -> Unit) {
     when (message.role) {
         "user" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             Surface(color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary, shape = RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp), modifier = Modifier.widthIn(max = 330.dp)) {
@@ -1302,8 +1306,8 @@ private fun MessageBubble(message: ChatMessage, autoOpenProgress: Boolean, onFor
         }
         "assistant" -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             val hasThinking = message.thinking?.isNotBlank() == true
-            message.thinking?.takeIf { it.isNotBlank() }?.let { ExpandableBlock(localized("思考过程", "Thinking"), it, autoOpen = autoOpenProgress, stateKey = message.id) }
-            if (message.text.isNotBlank()) MarkdownishText(message.text) else if (!hasThinking) Spacer(Modifier.height(1.dp))
+            message.thinking?.takeIf { it.isNotBlank() }?.let { ExpandableBlock(localized("思考过程", "Thinking"), it, autoOpen = autoOpenProgress, stateKey = message.id, lightweight = streaming) }
+            if (message.text.isNotBlank()) MarkdownishText(message.text, lightweight = streaming) else if (!hasThinking) Spacer(Modifier.height(1.dp))
             AttachmentGallery(message.attachments)
             if (message.text.isNotBlank()) AssistantActions(message.text, onFork, onShowDialog)
         }
@@ -1332,9 +1336,9 @@ private fun StatItem(icon: androidx.compose.ui.graphics.vector.ImageVector, text
 }
 
 @Composable
-private fun MarkdownishText(text: String) {
-    val blocks = remember(text) { parseMarkdownBlocks(text) }
-    SelectionContainer {
+private fun MarkdownishText(text: String, selectable: Boolean = false, lightweight: Boolean = false) {
+    val blocks = remember(text, lightweight) { if (lightweight) listOf(MdBlock.Text(text)) else parseMarkdownBlocks(text) }
+    val content: @Composable () -> Unit = {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             blocks.forEach { block ->
                 when (block) {
@@ -1344,6 +1348,7 @@ private fun MarkdownishText(text: String) {
             }
         }
     }
+    if (selectable) SelectionContainer { content() } else content()
 }
 
 private sealed interface MdBlock {
@@ -1367,10 +1372,14 @@ private fun parseMarkdownBlocks(text: String): List<MdBlock> {
 @Composable
 private fun MarkdownTextBlock(text: String) {
     val colors = MaterialTheme.colorScheme
+    val dark = colors.isDarkLike()
+    val inlineCodeBackground = if (dark) Color(0xFF312D36) else Color(0xFFE8EAF6)
+    val inlineCodeColor = if (dark) Color(0xFFEADDFF) else Color(0xFF5B3DB5)
+    val paragraphs = remember(text) { text.split(MarkdownParagraphBreakRegex).filter { it.isNotBlank() } }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        text.split(Regex("\\n{2,}")).filter { it.isNotBlank() }.forEach { para ->
+        paragraphs.forEach { para ->
             val lines = para.lines()
-            val heading = lines.firstOrNull()?.let { Regex("^(#{1,6})\\s+(.+)$").find(it) }
+            val heading = lines.firstOrNull()?.let { MarkdownHeadingRegex.find(it) }
             when {
                 heading != null && lines.size == 1 -> {
                     val level = heading.groupValues[1].length
@@ -1381,30 +1390,39 @@ private fun MarkdownTextBlock(text: String) {
                         lines.forEach { line ->
                             Row(horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.Top) {
                                 Text("•", color = colors.primary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                                Text(inlineMarkdown(line.trimStart().drop(2).trim(), colors.background.luminance() < 0.5f), color = colors.onSurface, fontSize = 16.sp, lineHeight = 24.sp, modifier = Modifier.weight(1f))
+                                Text(
+                                    inlineMarkdown(line.trimStart().drop(2).trim(), colors.onSurface, inlineCodeBackground, inlineCodeColor),
+                                    style = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
+                                    modifier = Modifier.weight(1f)
+                                )
                             }
                         }
                     }
                 }
-                else -> Text(inlineMarkdown(para, colors.background.luminance() < 0.5f), color = colors.onSurface, fontSize = 16.sp, lineHeight = 24.sp)
+                else -> Text(
+                    inlineMarkdown(para, colors.onSurface, inlineCodeBackground, inlineCodeColor),
+                    style = TextStyle(fontSize = 16.sp, lineHeight = 24.sp)
+                )
             }
         }
     }
 }
 
-private fun inlineMarkdown(text: String, dark: Boolean): AnnotatedString = buildAnnotatedString {
-    val re = Regex("(\\*\\*[^*]+\\*\\*|`[^`]+`)")
+private fun inlineMarkdown(text: String, baseColor: Color, inlineCodeBackground: Color, inlineCodeColor: Color): AnnotatedString = buildAnnotatedString {
     var last = 0
-    for (m in re.findAll(text)) {
-        append(text.substring(last, m.range.first))
+    fun appendPlain(until: Int) {
+        if (until > last) withStyle(SpanStyle(color = baseColor)) { append(text.substring(last, until)) }
+    }
+    for (m in InlineMarkdownRegex.findAll(text)) {
+        appendPlain(m.range.first)
         val token = m.value
         when {
-            token.startsWith("**") -> withStyle(SpanStyle(fontWeight = FontWeight.Black)) { append(token.removePrefix("**").removeSuffix("**")) }
-            token.startsWith("`") -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = if (dark) Color(0xFF2B2930) else Color(0xFFE8EAF6), color = if (dark) Color(0xFFD0BCFF) else Color(0xFF5B3DB5))) { append(token.removePrefix("`").removeSuffix("`")) }
+            token.startsWith("**") -> withStyle(SpanStyle(color = baseColor, fontWeight = FontWeight.Black)) { append(token.removePrefix("**").removeSuffix("**")) }
+            token.startsWith("`") -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = inlineCodeBackground, color = inlineCodeColor, fontWeight = FontWeight.SemiBold)) { append(token.removePrefix("`").removeSuffix("`")) }
         }
         last = m.range.last + 1
     }
-    append(text.substring(last))
+    appendPlain(text.length)
 }
 
 private enum class ToolKind { Read, Edit, Write, Bash, Ls, Grep, Find, Unknown }
@@ -1460,8 +1478,7 @@ private fun ToolKindIcon(kind: ToolKind, status: String) {
     val accent = toolKindAccent(kind)
     Surface(shape = RoundedCornerShape(9.dp), color = accent.copy(alpha = .13f), contentColor = accent, modifier = Modifier.size(26.dp)) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            if (status == "running") CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = accent)
-            else Icon(toolIcon(kind), contentDescription = null, modifier = Modifier.size(16.dp))
+            Icon(toolIcon(kind), contentDescription = null, modifier = Modifier.size(16.dp))
         }
     }
 }
@@ -1578,9 +1595,10 @@ private fun ToolMuted(text: String) {
 
 @Composable
 private fun ToolInlineCode(text: String, language: String = "bash") {
-    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val dark = MaterialTheme.colorScheme.isDarkLike()
+    val highlighted = remember(text, language, dark) { highlightCode(text, language, dark) }
     Surface(shape = RoundedCornerShape(7.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .10f), contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
-        Text(highlightCode(text, language, dark), fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 260.dp).padding(horizontal = 6.dp, vertical = 3.dp))
+        Text(highlighted, fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 260.dp).padding(horizontal = 6.dp, vertical = 3.dp))
     }
 }
 
@@ -1732,7 +1750,7 @@ private fun ToolPreviewHeader(title: String, path: String?, extra: String? = nul
 
 @Composable
 private fun ToolCodeBlock(title: String, text: String, maxLines: Int = 18) {
-    CodeBlock(title, text, maxCollapsedLines = maxLines)
+    CodeBlock(title, text, maxCollapsedLines = maxLines, highlight = false)
 }
 
 @Composable
@@ -1792,11 +1810,9 @@ private fun DiffBlock(title: String, lines: List<DiffLine>, maxLines: Int = 240)
             }
             TextButton(onClick = { clipboard.setText(AnnotatedString(text)) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) { Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp)); Text(localized("复制", "Copy"), fontSize = 12.sp) }
         }
-        SelectionContainer {
-            Column(Modifier.fillMaxWidth().background(bg)) {
-                visible.forEach { line -> DiffLineRow(line) }
-                if (clipped && !expanded) DiffLineRow(DiffLine(DiffLineType.Meta, localized("… 已隐藏 ${lines.size - maxLines} 行，共 ${lines.size} 行", "… ${lines.size - maxLines} hidden lines, ${lines.size} total")))
-            }
+        Column(Modifier.fillMaxWidth().background(bg)) {
+            visible.forEach { line -> DiffLineRow(line) }
+            if (clipped && !expanded) DiffLineRow(DiffLine(DiffLineType.Meta, localized("… 已隐藏 ${lines.size - maxLines} 行，共 ${lines.size} 行", "… ${lines.size - maxLines} hidden lines, ${lines.size} total")))
         }
     }
 }
@@ -1979,10 +1995,11 @@ private fun CodeBlock(
     text: String,
     collapsedChars: Int = TOOL_CODE_COLLAPSED_CHARS,
     maxCollapsedLines: Int? = null,
-    forceDark: Boolean = false
+    forceDark: Boolean = false,
+    highlight: Boolean = true
 ) {
     val clipboard = LocalClipboardManager.current
-    val dark = forceDark || MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val dark = forceDark || MaterialTheme.colorScheme.isDarkLike()
     val bg = MaterialTheme.colorScheme.surfaceContainerHighest
     val headerBg = MaterialTheme.colorScheme.surfaceContainerHigh
     val label = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1996,6 +2013,7 @@ private fun CodeBlock(
         if (lineLimited.length > collapsedChars) lineLimited.take(collapsedChars) else lineLimited
     }
     val displayText = if (clipped && !expanded) collapsedText else text
+    val highlighted = remember(displayText, title, dark, highlight) { if (highlight) highlightCode(displayText, title, dark) else AnnotatedString(displayText) }
     OutlinedCard(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.outlinedCardColors(containerColor = bg),
@@ -2011,7 +2029,7 @@ private fun CodeBlock(
             }
             TextButton(onClick = { clipboard.setText(AnnotatedString(text)) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) { Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp)); Text(localized("复制", "Copy"), fontSize = 12.sp) }
         }
-        SelectionContainer { Text(highlightCode(displayText, title, dark), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().background(bg).padding(10.dp), lineHeight = 18.sp) }
+        Text(highlighted, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = Modifier.fillMaxWidth().background(bg).padding(10.dp), lineHeight = 18.sp)
         if (clipped && !expanded) {
             val hiddenLines = (lines.size - (maxCollapsedLines ?: lines.size)).coerceAtLeast(0)
             val hiddenChars = (text.length - displayText.length).coerceAtLeast(0)
@@ -2158,7 +2176,7 @@ private fun fallbackHighlightCode(code: String, language: String, dark: Boolean)
 }
 
 @Composable
-private fun ExpandableBlock(title: String, text: String, autoOpen: Boolean = false, stateKey: String = title) {
+private fun ExpandableBlock(title: String, text: String, autoOpen: Boolean = false, stateKey: String = title, lightweight: Boolean = false) {
     var open by rememberSaveable(stateKey) { mutableStateOf(autoOpen) }
     LaunchedEffect(autoOpen, stateKey) { if (autoOpen) open = true }
     OutlinedCard(Modifier.fillMaxWidth()) {
@@ -2171,7 +2189,7 @@ private fun ExpandableBlock(title: String, text: String, autoOpen: Boolean = fal
                 Text(if (open) localized("收起", "Collapse") else localized("展开", "Expand"), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
             }
             if (open) Spacer(Modifier.height(8.dp))
-            if (open) MarkdownishText(text)
+            if (open) MarkdownishText(text, lightweight = lightweight)
         }
     }
 }
