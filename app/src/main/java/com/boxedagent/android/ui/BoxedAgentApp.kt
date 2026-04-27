@@ -748,6 +748,8 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             total == 0 || (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= total - 3
         }
     }
+    // Do not key this effect on scroll position: crossing the near-bottom threshold
+    // should not itself force a jump to the bottom.
     LaunchedEffect(
         state.activeMessages.size,
         lastMessage?.id,
@@ -760,8 +762,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         latestProgressMessage?.toolResult?.length,
         latestProgressArgsKey,
         latestProgressMessage?.toolStatus,
-        state.activeTurn,
-        stickToBottom
+        state.activeTurn
     ) {
         if ((state.activeMessages.isNotEmpty() || state.activeTurn) && stickToBottom) {
             withFrameNanos { }
