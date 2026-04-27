@@ -108,6 +108,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val id = boxId?.takeIf { it.isNotBlank() } ?: return
         prefs.edit().putString("fileBrowserPath:$id", path.ifBlank { "." }).apply()
     }
+    fun rememberedFileBookmarks(boxId: String?): List<String> {
+        val id = boxId?.takeIf { it.isNotBlank() } ?: return emptyList()
+        return prefs.getStringSet("fileBookmarks:$id", emptySet()).orEmpty().map { normalizeRelPath(it) }.distinct().sorted()
+    }
+    fun rememberFileBookmarks(boxId: String?, bookmarks: List<String>) {
+        val id = boxId?.takeIf { it.isNotBlank() } ?: return
+        prefs.edit().putStringSet("fileBookmarks:$id", bookmarks.map { normalizeRelPath(it) }.distinct().sorted().toSet()).apply()
+    }
     fun insertIntoComposer(text: String, returnToChat: Boolean = true) = _state.update { it.copy(composerInsert = ComposerInsert(sessionId = it.activeSessionId, text = text), selectedPanel = if (returnToChat) MainPanel.Chat else it.selectedPanel) }
     fun clearComposerInsert(id: Long) = _state.update { if (it.composerInsert?.id == id) it.copy(composerInsert = null) else it }
 
@@ -592,6 +600,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         try { block(); emit("$label 成功") }
         catch (e: Exception) { emit("$label 失败：${e.message}") }
     }
+}
+
+private fun normalizeRelPath(value: String): String {
+    val parts = mutableListOf<String>()
+    value.replace('\\', '/').split('/').forEach { part ->
+        when {
+            part.isBlank() || part == "." -> Unit
+            part == ".." -> if (parts.isNotEmpty()) parts.removeAt(parts.lastIndex)
+            else -> parts += part
+        }
+    }
+    return parts.joinToString("/").ifBlank { "." }
 }
 
 private fun safeCacheFileName(name: String): String = name

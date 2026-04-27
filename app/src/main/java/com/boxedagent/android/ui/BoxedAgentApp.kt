@@ -1184,11 +1184,10 @@ private fun ToolKindIcon(kind: ToolKind, status: String) {
 
 @Composable
 private fun toolKindAccent(kind: ToolKind): Color = when (kind) {
-    ToolKind.Read -> Color(0xFFA5D6FF)
-    ToolKind.Edit -> Color(0xFF93C5FD)
-    ToolKind.Write -> Color(0xFF7EE787)
-    ToolKind.Bash -> Color(0xFFD0BCFF)
-    ToolKind.Ls, ToolKind.Grep, ToolKind.Find -> Color(0xFFFFD8E4)
+    ToolKind.Read, ToolKind.Edit -> MaterialTheme.colorScheme.primary
+    ToolKind.Write -> MaterialTheme.colorScheme.tertiary
+    ToolKind.Bash -> MaterialTheme.colorScheme.secondary
+    ToolKind.Ls, ToolKind.Grep, ToolKind.Find -> MaterialTheme.colorScheme.primary
     ToolKind.Unknown -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
@@ -1233,17 +1232,14 @@ private fun toolKindForName(name: String?): ToolKind {
 
 @Composable
 private fun ToolStatusBadge(status: String) {
-    val (color, label) = when (status) {
-        "running" -> Color(0xFF60A5FA) to "运行中"
-        "error" -> MaterialTheme.colorScheme.error to "失败"
-        "done" -> Color(0xFF16A34A) to "完成"
-        else -> MaterialTheme.colorScheme.onSurfaceVariant to "准备"
+    val color = when (status) {
+        "running" -> MaterialTheme.colorScheme.primary
+        "error" -> MaterialTheme.colorScheme.error
+        "done" -> Color(0xFF16A34A)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Surface(shape = RoundedCornerShape(999.dp), color = color.copy(alpha = .10f), contentColor = color) {
-        Row(Modifier.padding(horizontal = 7.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-            Box(Modifier.size(8.dp).clip(CircleShape).background(color))
-            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-        }
+    Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(color))
     }
 }
 
@@ -1296,9 +1292,10 @@ private fun ToolMuted(text: String) {
 }
 
 @Composable
-private fun ToolInlineCode(text: String) {
+private fun ToolInlineCode(text: String, language: String = "bash") {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     Surface(shape = RoundedCornerShape(7.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .10f), contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
-        Text(text, fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 260.dp).padding(horizontal = 6.dp, vertical = 3.dp))
+        Text(highlightCode(text, language, dark), fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 260.dp).padding(horizontal = 6.dp, vertical = 3.dp))
     }
 }
 
@@ -1313,13 +1310,13 @@ private fun ToolChangeStats(added: Int, removed: Int) {
     }
 }
 
-private data class ToolFileBadgeData(val label: String, val bg: Color, val fg: Color)
+private data class ToolFileIconData(val icon: ImageVector, val description: String)
 
 @Composable
 private fun ToolFileRef(path: String) {
     val name = fileNameFromPath(path)
     Row(Modifier.widthIn(max = 190.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        ToolLanguageBadge(fileBadgeForPath(path))
+        ToolFileIcon(fileIconForPath(path))
         Text(name, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .88f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
@@ -1329,76 +1326,56 @@ private fun ToolPathPill(path: String?, fallback: String = "file") {
     val label = path?.let { fileNameFromPath(it) } ?: fallback
     Surface(shape = RoundedCornerShape(9.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .10f), contentColor = MaterialTheme.colorScheme.onSurface) {
         Row(Modifier.widthIn(max = 220.dp).padding(horizontal = 7.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-            ToolLanguageBadge(fileBadgeForPath(path ?: label))
+            ToolFileIcon(fileIconForPath(path ?: label))
             Text(label, fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
 
 @Composable
-private fun ToolLanguageBadge(badge: ToolFileBadgeData) {
-    Surface(shape = RoundedCornerShape(5.dp), color = badge.bg, contentColor = badge.fg, modifier = Modifier.height(18.dp).widthIn(min = 22.dp)) {
-        Box(Modifier.padding(horizontal = 4.dp), contentAlignment = Alignment.Center) {
-            Text(badge.label, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black, fontSize = 8.sp, maxLines = 1)
+private fun ToolFileIcon(data: ToolFileIconData) {
+    Surface(shape = RoundedCornerShape(7.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest, contentColor = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp)) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(data.icon, contentDescription = data.description, modifier = Modifier.size(15.dp))
         }
     }
 }
 
-private fun fileBadgeForPath(path: String): ToolFileBadgeData {
+private fun fileIconForPath(path: String): ToolFileIconData {
     val name = fileNameFromPath(path).lowercase()
-    specialFileBadge(name)?.let { return it }
+    specialFileIcon(name)?.let { return it }
     return when (fileExtension(name)) {
-        "js", "mjs", "cjs" -> badge("JS", Color(0xFFF7DF1E), Color(0xFF332900))
-        "jsx" -> badge("JSX", Color(0xFF61DAFB), Color(0xFF082F49))
-        "ts", "mts", "cts" -> badge("TS", Color(0xFF3178C6), Color.White)
-        "tsx" -> badge("TSX", Color(0xFF61DAFB), Color(0xFF082F49))
-        "py", "pyw", "ipynb" -> badge("PY", Color(0xFF3776AB), Color.White)
-        "kt", "kts" -> badge(if (name.endsWith(".kts")) "KTS" else "KT", Color(0xFF7F52FF), Color.White)
-        "java" -> badge("JAVA", Color(0xFFE76F00), Color(0xFFFFF7ED))
-        "go" -> badge("GO", Color(0xFF00ADD8), Color(0xFF042F3B))
-        "rs" -> badge("RS", Color(0xFFDEA584), Color(0xFF3B1D0F))
-        "rb" -> badge("RB", Color(0xFFCC342D), Color(0xFFFFF5F5))
-        "php" -> badge("PHP", Color(0xFF777BB4), Color.White)
-        "cs" -> badge("C#", Color(0xFF68217A), Color.White)
-        "swift" -> badge("SW", Color(0xFFF05138), Color.White)
-        "dart" -> badge("DART", Color(0xFF0175C2), Color.White)
-        "c", "h" -> badge(fileExtension(name).uppercase(), Color(0xFF555555), Color(0xFFF8FAFC))
-        "cc", "cpp", "cxx", "hpp", "hh" -> badge("C++", Color(0xFF00599C), Color.White)
-        "html", "htm" -> badge("HTML", Color(0xFFE34F26), Color(0xFFFFF7ED))
-        "css", "scss", "sass", "less" -> badge("CSS", Color(0xFF1572B6), Color(0xFFE0F2FE))
-        "vue" -> badge("VUE", Color(0xFF42B883), Color(0xFF06281B))
-        "json", "jsonc" -> badge("JSON", Color(0xFFF97316), Color(0xFFFFF7ED))
-        "yml", "yaml" -> badge("YAML", Color(0xFFCB171E), Color.White)
-        "toml" -> badge("TOML", Color(0xFF9C4221), Color(0xFFFFF7ED))
-        "xml" -> badge("XML", Color(0xFFFB923C), Color(0xFF431407))
-        "md", "mdx", "markdown" -> badge("MD", Color(0xFF64748B), Color(0xFFF8FAFC))
-        "sql", "sqlite", "sqlite3", "db" -> badge("SQL", Color(0xFF336791), Color(0xFFE0F2FE))
-        "sh", "bash" -> badge("SH", Color(0xFF4ADE80), Color(0xFF052E16))
-        "zsh" -> badge("ZSH", Color(0xFF4ADE80), Color(0xFF052E16))
-        "fish" -> badge("FSH", Color(0xFF4ADE80), Color(0xFF052E16))
-        "txt" -> badge("TXT", Color(0xFF475569), Color(0xFFE2E8F0))
-        "log" -> badge("LOG", Color(0xFF475569), Color(0xFFE2E8F0))
-        else -> fileExtension(name).takeIf { it.isNotBlank() }?.let { badge(it.take(4).uppercase(), Color(0xFF475569), Color(0xFFE2E8F0)) } ?: badge("FILE", Color(0xFF475569), Color(0xFFE2E8F0))
+        "js", "mjs", "cjs", "jsx" -> fileIcon(Icons.Rounded.Javascript, "JavaScript")
+        "html", "htm" -> fileIcon(Icons.Rounded.Html, "HTML")
+        "css", "scss", "sass", "less" -> fileIcon(Icons.Rounded.Css, "CSS")
+        "php" -> fileIcon(Icons.Rounded.Php, "PHP")
+        "json", "jsonc", "yml", "yaml", "toml", "xml", "gql", "graphql", "proto" -> fileIcon(Icons.Rounded.DataObject, "Data file")
+        "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd" -> fileIcon(Icons.Rounded.Terminal, "Shell")
+        "md", "mdx", "markdown", "txt", "log" -> fileIcon(Icons.Rounded.Article, "Document")
+        "csv", "tsv", "xls", "xlsx" -> fileIcon(Icons.Rounded.TableChart, "Table")
+        "sql", "sqlite", "sqlite3", "db" -> fileIcon(Icons.Rounded.Storage, "Database")
+        "zip", "tar", "gz", "tgz", "rar", "7z" -> fileIcon(Icons.Rounded.FolderZip, "Archive")
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg" -> fileIcon(Icons.Rounded.Image, "Image")
+        "pdf" -> fileIcon(Icons.Rounded.PictureAsPdf, "PDF")
+        "mp4", "mov", "mkv", "webm" -> fileIcon(Icons.Rounded.Movie, "Video")
+        "mp3", "wav", "m4a", "flac", "ogg" -> fileIcon(Icons.Rounded.AudioFile, "Audio")
+        "ts", "mts", "cts", "tsx", "py", "pyw", "ipynb", "kt", "kts", "java", "go", "rs", "rb", "cs", "swift", "dart", "scala", "groovy", "c", "h", "cc", "cpp", "cxx", "hpp", "hh", "vue", "svelte", "astro", "lua", "r", "ex", "exs" -> fileIcon(Icons.Rounded.LogoDev, "Source code")
+        else -> fileIcon(Icons.Rounded.Description, "File")
     }
 }
 
-private fun specialFileBadge(name: String): ToolFileBadgeData? = when {
-    name == "dockerfile" || name.endsWith(".dockerfile") || name in setOf("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml") -> badge("DK", Color(0xFF2496ED), Color(0xFFEFF6FF))
-    name == "makefile" -> badge("MK", Color(0xFF064E3B), Color(0xFFD1FAE5))
-    name == "cmakelists.txt" -> badge("CMake", Color(0xFF064E3B), Color(0xFFD1FAE5))
-    name.startsWith(".env") -> badge("ENV", Color(0xFFF59E0B), Color(0xFF1F1300))
-    name.startsWith(".git") -> badge("GIT", Color(0xFFF05032), Color(0xFFFFF7ED))
-    name in setOf("package.json", "package-lock.json", "pnpm-lock.yaml", "pnpm-lock.yml", "yarn.lock") -> badge("NPM", Color(0xFF3C873A), Color(0xFFF0FDF4))
-    name.startsWith("tsconfig") && name.endsWith(".json") -> badge("TS", Color(0xFF3178C6), Color.White)
-    name in setOf("go.mod", "go.sum") -> badge("GO", Color(0xFF00ADD8), Color(0xFF042F3B))
-    name in setOf("cargo.toml", "cargo.lock", "rust-toolchain") -> badge("RS", Color(0xFFDEA584), Color(0xFF3B1D0F))
-    name in setOf("requirements.txt", "pyproject.toml", "poetry.lock", "pdm.lock") -> badge("PY", Color(0xFF3776AB), Color.White)
-    name == "pom.xml" -> badge("MVN", Color(0xFFE76F00), Color(0xFFFFF7ED))
-    name.endsWith(".gradle") || name.endsWith(".gradle.kts") || name == "gradlew" -> badge("GRAD", Color(0xFF02303A), Color(0xFFA5F3FC))
+private fun specialFileIcon(name: String): ToolFileIconData? = when {
+    name == "dockerfile" || name.endsWith(".dockerfile") || name in setOf("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml") -> fileIcon(Icons.Rounded.DataObject, "Docker")
+    name == "makefile" || name == "cmakelists.txt" || name.endsWith(".gradle") || name.endsWith(".gradle.kts") || name == "gradlew" -> fileIcon(Icons.Rounded.Build, "Build file")
+    name.startsWith(".env") -> fileIcon(Icons.Rounded.Key, "Environment")
+    name.startsWith(".git") -> fileIcon(Icons.Rounded.Commit, "Git")
+    name in setOf("package.json", "package-lock.json", "pnpm-lock.yaml", "pnpm-lock.yml", "yarn.lock") -> fileIcon(Icons.Rounded.DataObject, "Node package")
+    name.startsWith("tsconfig") && name.endsWith(".json") -> fileIcon(Icons.Rounded.DataObject, "TypeScript config")
+    name in setOf("go.mod", "go.sum", "cargo.toml", "cargo.lock", "rust-toolchain", "requirements.txt", "pyproject.toml", "poetry.lock", "pdm.lock", "pom.xml") -> fileIcon(Icons.Rounded.LogoDev, "Project file")
     else -> null
 }
 
-private fun badge(label: String, bg: Color, fg: Color): ToolFileBadgeData = ToolFileBadgeData(label, bg, fg)
+private fun fileIcon(icon: ImageVector, description: String): ToolFileIconData = ToolFileIconData(icon, description)
 
 @Composable
 private fun ToolPreview(message: ChatMessage) {
@@ -1470,7 +1447,7 @@ private fun ToolPreviewHeader(title: String, path: String?, extra: String? = nul
 
 @Composable
 private fun ToolCodeBlock(title: String, text: String, maxLines: Int = 18) {
-    CodeBlock(title, text, maxCollapsedLines = maxLines, forceDark = true)
+    CodeBlock(title, text, maxCollapsedLines = maxLines)
 }
 
 @Composable
@@ -1502,8 +1479,8 @@ private enum class DiffLineType { Add, Del, Meta, Ctx }
 @Composable
 private fun DiffBlock(title: String, lines: List<DiffLine>, maxLines: Int = 240) {
     val clipboard = LocalClipboardManager.current
-    val bg = Color(0xFF0F0D13)
-    val headerBg = Color(0xFF191820)
+    val bg = MaterialTheme.colorScheme.surfaceContainerHighest
+    val headerBg = MaterialTheme.colorScheme.surfaceContainerHigh
     val clipped = lines.size > maxLines
     var expanded by remember { mutableStateOf(false) }
     val visible = if (clipped && !expanded) lines.take(maxLines) else lines
@@ -1521,7 +1498,7 @@ private fun DiffBlock(title: String, lines: List<DiffLine>, maxLines: Int = 240)
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(Modifier.fillMaxWidth().background(headerBg).padding(horizontal = 10.dp, vertical = 5.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(title, style = MaterialTheme.typography.labelSmall, color = Color(0xFFC9C3D4), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             if (clipped) {
                 TextButton(onClick = { expanded = !expanded }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
                     Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore, contentDescription = null, modifier = Modifier.size(13.dp))
@@ -1541,26 +1518,29 @@ private fun DiffBlock(title: String, lines: List<DiffLine>, maxLines: Int = 240)
 
 @Composable
 private fun DiffLineRow(line: DiffLine) {
+    val colors = MaterialTheme.colorScheme
+    val add = Color(0xFF16A34A)
+    val del = colors.error
     val bg = when (line.type) {
-        DiffLineType.Add -> Color(0x263FB950)
-        DiffLineType.Del -> Color(0x24F85149)
-        DiffLineType.Meta -> Color(0x1F58A6FF)
+        DiffLineType.Add -> add.copy(alpha = .12f)
+        DiffLineType.Del -> del.copy(alpha = .12f)
+        DiffLineType.Meta -> colors.primaryContainer.copy(alpha = .36f)
         DiffLineType.Ctx -> Color.Transparent
     }
     val stripe = when (line.type) {
-        DiffLineType.Add -> Color(0xFF3FB950)
-        DiffLineType.Del -> Color(0xFFF85149)
+        DiffLineType.Add -> add
+        DiffLineType.Del -> del
         else -> Color.Transparent
     }
     val signColor = when (line.type) {
-        DiffLineType.Add -> Color(0xFF7EE787)
-        DiffLineType.Del -> Color(0xFFFF7B72)
-        DiffLineType.Meta -> Color(0xFFA5D6FF)
-        DiffLineType.Ctx -> Color(0xFF8B949E)
+        DiffLineType.Add -> add
+        DiffLineType.Del -> del
+        DiffLineType.Meta -> colors.primary
+        DiffLineType.Ctx -> colors.onSurfaceVariant
     }
     val textColor = when (line.type) {
-        DiffLineType.Meta -> Color(0xFFA5D6FF)
-        else -> Color(0xFFD0D7DE)
+        DiffLineType.Meta -> colors.primary
+        else -> colors.onSurface
     }
     Row(Modifier.fillMaxWidth().background(bg), verticalAlignment = Alignment.Top) {
         Box(Modifier.width(3.dp).height(20.dp).background(stripe))
@@ -1718,9 +1698,9 @@ private fun CodeBlock(
 ) {
     val clipboard = LocalClipboardManager.current
     val dark = forceDark || MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val bg = if (dark) Color(0xFF0F0D13) else Color(0xFFF1F3F5)
-    val headerBg = if (dark) Color(0xFF191820) else Color(0xFFE7E9EE)
-    val label = if (dark) Color(0xFFC9C3D4) else Color(0xFF4B5563)
+    val bg = MaterialTheme.colorScheme.surfaceContainerHighest
+    val headerBg = MaterialTheme.colorScheme.surfaceContainerHigh
+    val label = MaterialTheme.colorScheme.onSurfaceVariant
     val lines = remember(text) { text.replace("\r\n", "\n").split("\n") }
     val lineClipped = maxCollapsedLines?.let { lines.size > it } == true
     val charClipped = text.length > collapsedChars
@@ -1734,7 +1714,7 @@ private fun CodeBlock(
     OutlinedCard(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.outlinedCardColors(containerColor = bg),
-        border = androidx.compose.foundation.BorderStroke(1.dp, if (dark) Color(0xFF2C2832) else MaterialTheme.colorScheme.outlineVariant)
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(Modifier.fillMaxWidth().background(headerBg).padding(horizontal = 10.dp, vertical = 5.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(title, style = MaterialTheme.typography.labelSmall, color = label, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
@@ -1758,7 +1738,7 @@ private fun CodeBlock(
                     if (hiddenChars > 0) append("已隐藏 $hiddenChars 个字符")
                     append("。点击“展开全部”查看完整结果。")
                 },
-                color = if (dark) Color(0xFFC9C3D4) else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
                 modifier = Modifier.fillMaxWidth().background(bg).padding(start = 10.dp, end = 10.dp, bottom = 8.dp)
             )
@@ -2204,6 +2184,8 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var path by remember(state.activeBoxId) { mutableStateOf(viewModel.rememberedFileBrowserPath(state.activeBoxId)) }
+    var bookmarks by remember(state.activeBoxId) { mutableStateOf(viewModel.rememberedFileBookmarks(state.activeBoxId)) }
+    var showBookmarksPanel by remember(state.activeBoxId) { mutableStateOf(false) }
     var entries by remember { mutableStateOf<List<FileEntry>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -2255,6 +2237,25 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
         viewModel.emit("已附加 ${entry.name}")
     }
     fun createTargetPath(name: String): String = if (path == "." || path.isBlank()) name else "$path/$name"
+    val normalizedPath = normalizeFileBrowserPath(path)
+    val currentBookmarked = bookmarks.contains(normalizedPath)
+    fun saveBookmarkList(next: List<String>) {
+        val cleaned = next.map { normalizeFileBrowserPath(it) }.distinct().sorted()
+        bookmarks = cleaned
+        viewModel.rememberFileBookmarks(state.activeBoxId, cleaned)
+    }
+    fun addBookmark(targetPath: String = path) {
+        val normalized = normalizeFileBrowserPath(targetPath)
+        if (normalized !in bookmarks) saveBookmarkList(bookmarks + normalized)
+    }
+    fun removeBookmark(targetPath: String = path) {
+        val normalized = normalizeFileBrowserPath(targetPath)
+        saveBookmarkList(bookmarks.filterNot { it == normalized })
+    }
+    fun toggleBookmark(targetPath: String = path) {
+        val normalized = normalizeFileBrowserPath(targetPath)
+        if (normalized in bookmarks) removeBookmark(normalized) else addBookmark(normalized)
+    }
     LaunchedEffect(state.activeBoxId, path) {
         viewModel.rememberFileBrowserPath(state.activeBoxId, path)
         loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it })
@@ -2264,6 +2265,7 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             FilledTonalIconButton(onClick = { path = parentPath(path) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.ArrowUpward, contentDescription = "上级", modifier = Modifier.size(19.dp)) }
             FilledTonalIconButton(onClick = { reload() }, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.Refresh, contentDescription = "刷新", modifier = Modifier.size(19.dp)) }
+            FilledTonalIconButton(onClick = { showBookmarksPanel = !showBookmarksPanel }, modifier = Modifier.size(36.dp)) { Icon(if (currentBookmarked) Icons.Rounded.BookmarkAdded else Icons.Rounded.Bookmarks, contentDescription = "书签", modifier = Modifier.size(19.dp), tint = if (currentBookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSecondaryContainer) }
             FilledTonalButton(onClick = { pickUpload.launch(arrayOf("*/*")) }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) { Icon(Icons.Rounded.Upload, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("上传", fontSize = 13.sp) }
             OutlinedButton(onClick = { createKind = "file"; createName = "" }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) { Icon(Icons.Rounded.NoteAdd, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("文件", fontSize = 13.sp) }
             OutlinedButton(onClick = { createKind = "dir"; createName = "" }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) { Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(17.dp)); Spacer(Modifier.width(4.dp)); Text("目录", fontSize = 13.sp) }
@@ -2273,6 +2275,15 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
                 Icon(Icons.Rounded.FolderOpen, contentDescription = null, modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
                 BasicTextField(value = path, onValueChange = { path = it.ifBlank { "." } }, singleLine = true, textStyle = TextStyle(fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, fontFamily = FontFamily.Monospace), modifier = Modifier.weight(1f))
             }
+        }
+        AnimatedVisibility(visible = showBookmarksPanel) {
+            FileBookmarksPanel(
+                currentPath = normalizedPath,
+                bookmarks = bookmarks,
+                onJump = { path = it; showBookmarksPanel = false },
+                onToggleCurrent = { toggleBookmark(path) },
+                onRemove = { removeBookmark(it) }
+            )
         }
         createKind?.let { kind ->
             Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(10.dp), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
@@ -2317,6 +2328,10 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
         ModalBottomSheet(onDismissRequest = { actionEntry = null }) {
             SheetHeader(if (entry.type == "directory") Icons.Rounded.Folder else Icons.Rounded.Description, entry.name, workspaceAbsPath(entry.path))
             if (entry.type == "directory") ListItem(headlineContent = { Text("打开目录") }, leadingContent = { Icon(Icons.Rounded.FolderOpen, contentDescription = null) }, modifier = Modifier.clickable { path = entry.path; actionEntry = null })
+            if (entry.type == "directory") {
+                val bookmarked = bookmarks.contains(normalizeFileBrowserPath(entry.path))
+                ListItem(headlineContent = { Text(if (bookmarked) "移除目录书签" else "添加到书签") }, leadingContent = { Icon(if (bookmarked) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd, contentDescription = null) }, modifier = Modifier.clickable { toggleBookmark(entry.path); actionEntry = null })
+            }
             if (entry.type == "file") ListItem(headlineContent = { Text("预览打开") }, supportingContent = { Text("下载到应用缓存后使用本机应用打开") }, leadingContent = { Icon(Icons.Rounded.Visibility, contentDescription = null) }, modifier = Modifier.clickable { actionEntry = null; requestPreview(entry) })
             if (entry.type == "file") ListItem(headlineContent = { Text("快速附加到消息") }, supportingContent = { Text(fileRef(workspaceAbsPath(entry.path))) }, leadingContent = { Icon(Icons.Rounded.AttachFile, contentDescription = null) }, modifier = Modifier.clickable { attach(entry); actionEntry = null })
             ListItem(headlineContent = { Text("复制路径") }, supportingContent = { Text(workspaceAbsPath(entry.path)) }, leadingContent = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }, modifier = Modifier.clickable { clipboard.setText(AnnotatedString(workspaceAbsPath(entry.path))); actionEntry = null; viewModel.emit("已复制路径") })
@@ -2335,6 +2350,54 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
     }
     previewDownload?.let { progress ->
         PreviewDownloadDialog(progress = progress, onCancel = { previewJob?.cancel(); previewJob = null; previewDownload = null })
+    }
+}
+
+@Composable
+private fun FileBookmarksPanel(
+    currentPath: String,
+    bookmarks: List<String>,
+    onJump: (String) -> Unit,
+    onToggleCurrent: () -> Unit,
+    onRemove: (String) -> Unit
+) {
+    OutlinedCard(Modifier.fillMaxWidth(), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Rounded.Bookmarks, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("书签", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("快速跳转常用目录", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                }
+                TextButton(onClick = onToggleCurrent, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                    Icon(if (bookmarks.contains(currentPath)) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Text(if (bookmarks.contains(currentPath)) "移除当前" else "添加当前", fontSize = 12.sp)
+                }
+            }
+            if (bookmarks.isEmpty()) {
+                Text("还没有书签，点击“添加当前”收藏当前目录。", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(vertical = 6.dp))
+            } else {
+                Column(Modifier.fillMaxWidth().heightIn(max = 220.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    bookmarks.forEach { bookmark ->
+                        val active = normalizeFileBrowserPath(bookmark) == currentPath
+                        Surface(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { onJump(bookmark) },
+                            color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
+                            contentColor = if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                        ) {
+                            Row(Modifier.padding(start = 10.dp, end = 4.dp, top = 7.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Rounded.Bookmark, contentDescription = null, modifier = Modifier.size(17.dp), tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                                Column(Modifier.weight(1f)) {
+                                    Text(bookmarkLabel(bookmark), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(workspaceAbsPath(bookmark), fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = LocalContentColor.current.copy(alpha = .72f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                IconButton(onClick = { onRemove(bookmark) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.Close, contentDescription = "移除书签", modifier = Modifier.size(16.dp)) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -2522,6 +2585,18 @@ private fun parseObject(text: String): JsonObject {
     return parsed as? JsonObject ?: error("必须是 JSON 对象")
 }
 private fun parseEnv(text: String): Map<String, String> = parseObject(text).mapValues { it.value.jsonPrimitive.contentOrNull ?: it.value.toString() }
+private fun normalizeFileBrowserPath(value: String): String {
+    val parts = mutableListOf<String>()
+    value.replace('\\', '/').split('/').forEach { part ->
+        when {
+            part.isBlank() || part == "." -> Unit
+            part == ".." -> if (parts.isNotEmpty()) parts.removeAt(parts.lastIndex)
+            else -> parts += part
+        }
+    }
+    return parts.joinToString("/").ifBlank { "." }
+}
+private fun bookmarkLabel(path: String): String = normalizeFileBrowserPath(path).let { normalized -> if (normalized == ".") "workspace" else normalized.split('/').lastOrNull().orEmpty().ifBlank { normalized } }
 private fun parentPath(path: String): String = if (path == "." || path.isBlank()) "." else path.split('/').dropLast(1).joinToString("/").ifBlank { "." }
 private fun workspaceAbsPath(path: String): String = when {
     path.startsWith("/workspace") -> path
