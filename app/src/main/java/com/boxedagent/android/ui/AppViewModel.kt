@@ -12,6 +12,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -30,8 +33,18 @@ private const val DEFAULT_BASE_URL = "http://10.0.2.2:8080"
 
 private val vmJson = Json { ignoreUnknownKeys = true; explicitNulls = false; isLenient = true }
 
-enum class MainPanel { Boxes, Chat, Tools }
+enum class MainPanel { Boxes, Chat, Tools, Settings }
 enum class ToolTab { Terminal, Files, Pi, CodeServer }
+enum class AppThemeMode { Light, Dark }
+enum class AppLanguageMode { System, Zh, En }
+
+@Serializable
+data class ServerProfile(
+    val id: String = "",
+    val name: String = "",
+    val baseUrl: String = DEFAULT_BASE_URL,
+    val token: String = ""
+)
 
 data class UiEvent(val id: Long = System.nanoTime(), val message: String)
 data class ComposerInsert(val id: Long = System.nanoTime(), val sessionId: String?, val text: String)
@@ -58,6 +71,10 @@ data class AppUiState(
     val statsBySession: Map<String, SessionStats?> = emptyMap(),
     val sessionModels: List<PiModel> = emptyList(),
     val modelLoading: Boolean = false,
+    val serverProfiles: List<ServerProfile> = emptyList(),
+    val activeServerProfileId: String? = null,
+    val themeMode: AppThemeMode = AppThemeMode.Light,
+    val languageMode: AppLanguageMode = AppLanguageMode.System,
     val event: UiEvent? = null,
     val composerInsert: ComposerInsert? = null
 ) {
@@ -74,9 +91,16 @@ data class CachedPreviewFile(val name: String, val mimeType: String, val file: F
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("boxedagent", Context.MODE_PRIVATE)
+    private val initialProfiles = loadServerProfiles(prefs)
+    private val initialActiveProfileId = prefs.getString("activeServerProfileId", null)?.takeIf { id -> initialProfiles.any { it.id == id } } ?: initialProfiles.firstOrNull()?.id
+    private val initialActiveProfile = initialProfiles.firstOrNull { it.id == initialActiveProfileId } ?: initialProfiles.first()
     private val _state = MutableStateFlow(AppUiState(
-        baseUrl = prefs.getString("baseUrl", DEFAULT_BASE_URL) ?: DEFAULT_BASE_URL,
-        token = prefs.getString("token", "") ?: ""
+        baseUrl = initialActiveProfile.baseUrl,
+        token = initialActiveProfile.token,
+        serverProfiles = initialProfiles,
+        activeServerProfileId = initialActiveProfileId,
+        themeMode = prefs.getString("themeMode", AppThemeMode.Light.name)?.let { runCatching { AppThemeMode.valueOf(it) }.getOrNull() } ?: AppThemeMode.Light,
+        languageMode = prefs.getString("languageMode", AppLanguageMode.System.name)?.let { runCatching { AppLanguageMode.valueOf(it) }.getOrNull() } ?: AppLanguageMode.System
     ))
     val state: StateFlow<AppUiState> = _state
 
@@ -100,6 +124,41 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun setPanel(panel: MainPanel) = _state.update { it.copy(selectedPanel = panel) }
     fun setToolTab(tab: ToolTab) = _state.update { it.copy(selectedToolTab = tab) }
     fun updateConnectionFields(baseUrl: String? = null, token: String? = null) = _state.update { it.copy(baseUrl = baseUrl ?: it.baseUrl, token = token ?: it.token) }
+    fun setThemeMode(mode: AppThemeMode) {
+        prefs.edit().putString("themeMode", mode.name).apply()
+        _state.update { it.copy(themeMode = mode) }
+    }
+    fun setLanguageMode(mode: AppLanguageMode) {
+        prefs.edit().putString("languageMode", mode.name).apply()
+        _state.update { it.copy(languageMode = mode) }
+    }
+    fun saveServerProfile(id: String?, name: String, baseUrl: String, token: String, connectAfterSave: Boolean) {
+        val normalizedUrl = BoxedAgentApi.normalizeBaseUrl(baseUrl)
+        val profileId = id?.takeIf { existing -> _state.value.serverProfiles.any { it.id == existing } } ?: "server-${System.nanoTime()}"
+        val profile = ServerProfile(profileId, name.trim().ifBlank { normalizedUrl }, normalizedUrl, token.trim())
+        _state.update { old ->
+            val next = if (old.serverProfiles.any { it.id == profileId }) old.serverProfiles.map { if (it.id == profileId) profile else it } else old.serverProfiles + profile
+            persistServerProfiles(next, old.activeServerProfileId)
+            old.copy(serverProfiles = next)
+        }
+        if (connectAfterSave) switchServerProfile(profileId)
+        else emit("服务器已保存")
+    }
+    fun switchServerProfile(id: String) {
+        val profile = _state.value.serverProfiles.firstOrNull { it.id == id } ?: return emit("服务器不存在")
+        _state.update { it.copy(activeServerProfileId = id, baseUrl = profile.baseUrl, token = profile.token) }
+        prefs.edit().putString("activeServerProfileId", id).putString("baseUrl", profile.baseUrl).putString("token", profile.token).apply()
+        viewModelScope.launch { connect(profile.baseUrl, profile.token, silent = false) }
+    }
+    fun deleteServerProfile(id: String) {
+        val s = _state.value
+        if (s.serverProfiles.size <= 1) return emit("至少保留一个服务器")
+        val next = s.serverProfiles.filterNot { it.id == id }
+        val nextActive = if (s.activeServerProfileId == id) next.first().id else s.activeServerProfileId
+        persistServerProfiles(next, nextActive)
+        _state.update { it.copy(serverProfiles = next, activeServerProfileId = nextActive) }
+        if (s.activeServerProfileId == id) switchServerProfile(nextActive ?: next.first().id) else emit("服务器已删除")
+    }
 
     fun emit(message: String) = _state.update { it.copy(event = UiEvent(message = message)) }
     fun clearEvent(id: Long) = _state.update { if (it.event?.id == id) it.copy(event = null) else it }
@@ -127,7 +186,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun connect(baseUrl: String, token: String, silent: Boolean = false) {
         _state.update { it.copy(authLoading = true, connectionError = null) }
         api.updateConnection(baseUrl, token)
-        prefs.edit().putString("baseUrl", api.baseUrl).putString("token", token.trim()).apply()
+        persistActiveConnection(api.baseUrl, token.trim())
         try {
             val status = api.authStatus()
             var authenticated = status.authenticated
@@ -162,7 +221,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             prefs.edit().remove("token").apply()
             globalWs?.close(1000, null); boxWs?.close(1000, null); sessionWs?.close(1000, null)
             pollingJob?.cancel()
-            _state.update { AppUiState(baseUrl = it.baseUrl, token = "", authEnabled = it.authEnabled, authenticated = !it.authEnabled) }
+            _state.update { old -> old.copy(token = "", authEnabled = old.authEnabled, authenticated = !old.authEnabled, boxes = emptyList(), sessions = emptyList(), activeBoxId = null, activeSessionId = null, messagesBySession = emptyMap()) }
         }
     }
 
@@ -596,10 +655,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return ExpandedFileRefs(fileText.toString() + message, images, seen)
     }
 
+    private fun persistActiveConnection(baseUrl: String, token: String) {
+        val s = _state.value
+        val activeId = s.activeServerProfileId
+        val nextProfiles = s.serverProfiles.map { profile -> if (profile.id == activeId) profile.copy(baseUrl = baseUrl, token = token) else profile }
+        prefs.edit().putString("baseUrl", baseUrl).putString("token", token).putString("activeServerProfileId", activeId).apply()
+        if (nextProfiles != s.serverProfiles) {
+            persistServerProfiles(nextProfiles, activeId)
+            _state.update { it.copy(serverProfiles = nextProfiles) }
+        }
+    }
+
+    private fun persistServerProfiles(profiles: List<ServerProfile>, activeId: String?) {
+        prefs.edit()
+            .putString("serverProfilesJson", vmJson.encodeToString(profiles))
+            .putString("activeServerProfileId", activeId)
+            .apply()
+    }
+
     private suspend fun runApi(label: String, block: suspend () -> Unit) {
         try { block(); emit("$label 成功") }
         catch (e: Exception) { emit("$label 失败：${e.message}") }
     }
+}
+
+private fun loadServerProfiles(prefs: android.content.SharedPreferences): List<ServerProfile> {
+    val stored = prefs.getString("serverProfilesJson", null)
+    val parsed = stored?.let { runCatching { vmJson.decodeFromString<List<ServerProfile>>(it) }.getOrNull() }.orEmpty()
+        .mapNotNull { profile ->
+            val id = profile.id.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            profile.copy(name = profile.name.ifBlank { profile.baseUrl }, baseUrl = BoxedAgentApi.normalizeBaseUrl(profile.baseUrl), token = profile.token.trim())
+        }
+        .distinctBy { it.id }
+    if (parsed.isNotEmpty()) return parsed
+    val baseUrl = BoxedAgentApi.normalizeBaseUrl(prefs.getString("baseUrl", DEFAULT_BASE_URL) ?: DEFAULT_BASE_URL)
+    val token = prefs.getString("token", "")?.trim().orEmpty()
+    return listOf(ServerProfile("default", "Default", baseUrl, token))
 }
 
 private fun normalizeRelPath(value: String): String {

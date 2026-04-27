@@ -84,17 +84,143 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.Base64
+import java.util.Locale
 import kotlin.math.max
 
 private val UiJson = Json { prettyPrint = true; ignoreUnknownKeys = true; explicitNulls = false }
 private val ThinkingLevels = listOf("off", "minimal", "low", "medium", "high", "xhigh")
+
+private data class AppStrings(
+    val boxesTitle: String,
+    val boxesSubtitle: String,
+    val toolsTitle: String,
+    val toolsSubtitle: String,
+    val settingsTitle: String,
+    val settingsSubtitle: String,
+    val close: String,
+    val connectionTitle: String,
+    val connectionDesc: String,
+    val apiUrl: String,
+    val token: String,
+    val connect: String,
+    val connecting: String,
+    val serverSettings: String,
+    val appSettings: String,
+    val serverManagement: String,
+    val addServer: String,
+    val editServer: String,
+    val serverName: String,
+    val save: String,
+    val saveAndConnect: String,
+    val active: String,
+    val switchServer: String,
+    val delete: String,
+    val theme: String,
+    val lightMode: String,
+    val darkMode: String,
+    val language: String,
+    val followSystem: String,
+    val chinese: String,
+    val english: String,
+    val currentServer: String,
+    val toolsTerminal: String,
+    val toolsFiles: String,
+    val toolsPi: String,
+    val toolsCode: String
+)
+
+private val ZhStrings = AppStrings(
+    boxesTitle = "Boxes / Sessions",
+    boxesSubtitle = "Docker 沙箱与会话管理",
+    toolsTitle = "Tools",
+    toolsSubtitle = "Shell、Files、Pi、code-server",
+    settingsTitle = "软件设置",
+    settingsSubtitle = "服务器连接、外观与语言",
+    close = "关闭",
+    connectionTitle = "连接 BoxedAgent",
+    connectionDesc = "输入 BoxedAgent 后端地址与 BOXEDAGENT_TOKEN。模拟器访问宿主机默认使用 http://10.0.2.2:8080。",
+    apiUrl = "API 地址",
+    token = "Token（未启用认证可留空）",
+    connect = "连接 / 登录",
+    connecting = "连接中…",
+    serverSettings = "软件设置",
+    appSettings = "应用设置",
+    serverManagement = "服务器连接",
+    addServer = "新增服务器",
+    editServer = "编辑服务器",
+    serverName = "服务器名称",
+    save = "保存",
+    saveAndConnect = "保存并连接",
+    active = "当前",
+    switchServer = "切换连接",
+    delete = "删除",
+    theme = "外观模式",
+    lightMode = "亮色模式",
+    darkMode = "暗色模式",
+    language = "软件语言",
+    followSystem = "跟随系统",
+    chinese = "中文",
+    english = "English",
+    currentServer = "当前服务器",
+    toolsTerminal = "Shell",
+    toolsFiles = "Files",
+    toolsPi = "Pi",
+    toolsCode = "Code"
+)
+
+private val EnStrings = AppStrings(
+    boxesTitle = "Boxes / Sessions",
+    boxesSubtitle = "Docker sandboxes and sessions",
+    toolsTitle = "Tools",
+    toolsSubtitle = "Shell, Files, Pi, code-server",
+    settingsTitle = "Settings",
+    settingsSubtitle = "Server connections, appearance and language",
+    close = "Close",
+    connectionTitle = "Connect to BoxedAgent",
+    connectionDesc = "Enter the BoxedAgent backend URL and BOXEDAGENT_TOKEN. Android emulator usually reaches the host at http://10.0.2.2:8080.",
+    apiUrl = "API URL",
+    token = "Token (optional when auth is disabled)",
+    connect = "Connect / Sign in",
+    connecting = "Connecting…",
+    serverSettings = "Settings",
+    appSettings = "App settings",
+    serverManagement = "Server connections",
+    addServer = "Add server",
+    editServer = "Edit server",
+    serverName = "Server name",
+    save = "Save",
+    saveAndConnect = "Save & connect",
+    active = "Active",
+    switchServer = "Switch connection",
+    delete = "Delete",
+    theme = "Appearance",
+    lightMode = "Light mode",
+    darkMode = "Dark mode",
+    language = "Language",
+    followSystem = "Follow system",
+    chinese = "中文",
+    english = "English",
+    currentServer = "Current server",
+    toolsTerminal = "Shell",
+    toolsFiles = "Files",
+    toolsPi = "Pi",
+    toolsCode = "Code"
+)
+
+private fun stringsFor(mode: AppLanguageMode): AppStrings = when (mode) {
+    AppLanguageMode.Zh -> ZhStrings
+    AppLanguageMode.En -> EnStrings
+    AppLanguageMode.System -> if (Locale.getDefault().language.startsWith("zh")) ZhStrings else EnStrings
+}
 private const val PREVIEW_LARGE_FILE_THRESHOLD_BYTES: Long = 10L * 1024L * 1024L
 private const val TOOL_CODE_COLLAPSED_CHARS = 12_000
+private const val DEFAULT_CONNECTION_URL = "http://10.0.2.2:8080"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BoxedAgentApp(viewModel: AppViewModel) {
     val state by viewModel.state.collectAsState()
+    val strings = stringsFor(state.languageMode)
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(state.event?.id) {
@@ -120,17 +246,25 @@ fun BoxedAgentApp(viewModel: AppViewModel) {
             SideOverlay(
                 visible = state.selectedPanel == MainPanel.Boxes,
                 fromStart = true,
-                title = "Boxes / Sessions",
-                subtitle = "Docker 沙箱与会话管理",
-                onClose = { viewModel.setPanel(MainPanel.Chat) }
+                title = strings.boxesTitle,
+                subtitle = strings.boxesSubtitle,
+                onClose = { viewModel.setPanel(MainPanel.Chat) },
+                actions = { IconButton(onClick = { viewModel.setPanel(MainPanel.Settings) }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.Settings, contentDescription = strings.settingsTitle) } }
             ) { BoxesScreen(state, viewModel) }
             SideOverlay(
                 visible = state.selectedPanel == MainPanel.Tools,
                 fromStart = false,
-                title = "Tools",
-                subtitle = "Shell、Files、Pi、code-server",
+                title = strings.toolsTitle,
+                subtitle = strings.toolsSubtitle,
                 onClose = { viewModel.setPanel(MainPanel.Chat) }
             ) { ToolsScreen(state, viewModel) }
+            SideOverlay(
+                visible = state.selectedPanel == MainPanel.Settings,
+                fromStart = true,
+                title = strings.settingsTitle,
+                subtitle = strings.settingsSubtitle,
+                onClose = { viewModel.setPanel(MainPanel.Boxes) }
+            ) { SettingsScreen(state, viewModel, strings) }
         }
     }
 }
@@ -143,6 +277,7 @@ private fun SideOverlay(
     title: String,
     subtitle: String,
     onClose: () -> Unit,
+    actions: @Composable RowScope.() -> Unit = {},
     content: @Composable () -> Unit
 ) {
     AnimatedVisibility(
@@ -162,6 +297,7 @@ private fun SideOverlay(
                         Text(title, fontWeight = FontWeight.Black, fontSize = 22.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                    actions()
                 }
                 Box(Modifier.weight(1f)) { content() }
             }
@@ -171,22 +307,147 @@ private fun SideOverlay(
 
 @Composable
 private fun ConnectionScreen(state: AppUiState, viewModel: AppViewModel, modifier: Modifier = Modifier) {
+    val strings = stringsFor(state.languageMode)
     var baseUrl by remember(state.baseUrl) { mutableStateOf(state.baseUrl) }
     var token by remember(state.token) { mutableStateOf(state.token) }
     Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
         ElevatedCard(Modifier.padding(20.dp).fillMaxWidth()) {
             Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text("连接 BoxedAgent", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
-                Text("输入 BoxedAgent 后端地址与 BOXEDAGENT_TOKEN。模拟器访问宿主机默认使用 http://10.0.2.2:8080。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it; viewModel.updateConnectionFields(baseUrl = it) }, label = { Text("API 地址") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = token, onValueChange = { token = it; viewModel.updateConnectionFields(token = it) }, label = { Text("Token（未启用认证可留空）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Text(strings.connectionTitle, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                Text(strings.connectionDesc, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it; viewModel.updateConnectionFields(baseUrl = it) }, label = { Text(strings.apiUrl) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = token, onValueChange = { token = it; viewModel.updateConnectionFields(token = it) }, label = { Text(strings.token) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 state.connectionError?.let { AssistChip(onClick = {}, label = { Text(it) }, colors = AssistChipDefaults.assistChipColors(labelColor = MaterialTheme.colorScheme.error)) }
                 Button(onClick = { viewModel.updateConnectionFields(baseUrl, token); viewModel.connectFromState() }, enabled = !state.authLoading, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (state.authLoading) "连接中…" else "连接 / 登录")
+                    Text(if (state.authLoading) strings.connecting else strings.connect)
                 }
             }
         }
     }
+}
+
+@Composable
+private fun SettingsScreen(state: AppUiState, viewModel: AppViewModel, strings: AppStrings) {
+    var editingProfile by remember { mutableStateOf<ServerProfile?>(null) }
+    var addingProfile by remember { mutableStateOf(false) }
+    var deleteProfile by remember { mutableStateOf<ServerProfile?>(null) }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            SettingsSectionCard(title = strings.serverManagement, icon = Icons.Rounded.Cloud) {
+                Text(strings.currentServer, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                state.serverProfiles.forEach { profile ->
+                    ServerProfileRow(
+                        profile = profile,
+                        active = profile.id == state.activeServerProfileId,
+                        strings = strings,
+                        onSwitch = { viewModel.switchServerProfile(profile.id) },
+                        onEdit = { editingProfile = profile },
+                        onDelete = { deleteProfile = profile }
+                    )
+                }
+                OutlinedButton(onClick = { addingProfile = true }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(strings.addServer)
+                }
+            }
+        }
+        item {
+            SettingsSectionCard(title = strings.appSettings, icon = Icons.Rounded.Tune) {
+                Text(strings.theme, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SettingsChoiceChip(strings.lightMode, selected = state.themeMode == AppThemeMode.Light, modifier = Modifier.weight(1f)) { viewModel.setThemeMode(AppThemeMode.Light) }
+                    SettingsChoiceChip(strings.darkMode, selected = state.themeMode == AppThemeMode.Dark, modifier = Modifier.weight(1f)) { viewModel.setThemeMode(AppThemeMode.Dark) }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(strings.language, fontWeight = FontWeight.Bold)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SettingsChoiceChip(strings.followSystem, selected = state.languageMode == AppLanguageMode.System, modifier = Modifier.fillMaxWidth()) { viewModel.setLanguageMode(AppLanguageMode.System) }
+                    SettingsChoiceChip(strings.chinese, selected = state.languageMode == AppLanguageMode.Zh, modifier = Modifier.fillMaxWidth()) { viewModel.setLanguageMode(AppLanguageMode.Zh) }
+                    SettingsChoiceChip(strings.english, selected = state.languageMode == AppLanguageMode.En, modifier = Modifier.fillMaxWidth()) { viewModel.setLanguageMode(AppLanguageMode.En) }
+                }
+            }
+        }
+    }
+    if (addingProfile) ServerProfileDialog(strings = strings, initial = null, onDismiss = { addingProfile = false }, onSave = { name, url, token, connect -> addingProfile = false; viewModel.saveServerProfile(null, name, url, token, connect) })
+    editingProfile?.let { profile ->
+        ServerProfileDialog(strings = strings, initial = profile, onDismiss = { editingProfile = null }, onSave = { name, url, token, connect -> editingProfile = null; viewModel.saveServerProfile(profile.id, name, url, token, connect) })
+    }
+    deleteProfile?.let { profile ->
+        ConfirmDialog(strings.delete, "${strings.delete} ${profile.name}?", onDismiss = { deleteProfile = null }, onConfirm = { viewModel.deleteServerProfile(profile.id); deleteProfile = null })
+    }
+}
+
+@Composable
+private fun SettingsSectionCard(title: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+                    Icon(icon, contentDescription = null, modifier = Modifier.padding(8.dp).size(20.dp))
+                }
+                Text(title, fontWeight = FontWeight.Black, fontSize = 17.sp)
+            }
+            content()
+        }
+    }
+}
+
+@Composable
+private fun SettingsChoiceChip(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        leadingIcon = { if (selected) Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(16.dp)) },
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun ServerProfileRow(profile: ServerProfile, active: Boolean, strings: AppStrings, onSwitch: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
+    OutlinedCard(Modifier.fillMaxWidth(), border = androidx.compose.foundation.BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.primary.copy(alpha = .55f) else MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Rounded.Dns, contentDescription = null, tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.weight(1f)) {
+                    Text(profile.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(profile.baseUrl, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (active) AssistChip(onClick = {}, label = { Text(strings.active, fontSize = 11.sp) }, leadingIcon = { Icon(Icons.Rounded.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp)) })
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onSwitch, enabled = !active, modifier = Modifier.weight(1f)) { Text(strings.switchServer, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                IconButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, contentDescription = strings.editServer) }
+                IconButton(onClick = onDelete, enabled = !active) { Icon(Icons.Rounded.Delete, contentDescription = strings.delete, tint = if (active) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .45f) else MaterialTheme.colorScheme.error) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServerProfileDialog(strings: AppStrings, initial: ServerProfile?, onDismiss: () -> Unit, onSave: (String, String, String, Boolean) -> Unit) {
+    var name by remember(initial?.id) { mutableStateOf(initial?.name.orEmpty()) }
+    var baseUrl by remember(initial?.id) { mutableStateOf(initial?.baseUrl ?: DEFAULT_CONNECTION_URL) }
+    var token by remember(initial?.id) { mutableStateOf(initial?.token.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) strings.addServer else strings.editServer) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(name, { name = it }, label = { Text(strings.serverName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text(strings.apiUrl) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(token, { token = it }, label = { Text(strings.token) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(strings.close) } },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { onSave(name, baseUrl, token, false) }, enabled = baseUrl.isNotBlank()) { Text(strings.save) }
+                Button(onClick = { onSave(name, baseUrl, token, true) }, enabled = baseUrl.isNotBlank()) { Text(strings.saveAndConnect) }
+            }
+        }
+    )
 }
 
 @Composable
@@ -2011,6 +2272,7 @@ private fun CenterWelcome(title: String, subtitle: String) { Box(Modifier.fillMa
 
 @Composable
 private fun ToolsScreen(state: AppUiState, viewModel: AppViewModel) {
+    val strings = stringsFor(state.languageMode)
     Column(Modifier.fillMaxSize()) {
         TabRow(selectedTabIndex = state.selectedToolTab.ordinal) {
             ToolTab.entries.forEach { tab ->
@@ -2018,7 +2280,7 @@ private fun ToolsScreen(state: AppUiState, viewModel: AppViewModel) {
                     selected = state.selectedToolTab == tab,
                     onClick = { viewModel.setToolTab(tab) },
                     icon = { Icon(when (tab) { ToolTab.Terminal -> Icons.Rounded.Terminal; ToolTab.Files -> Icons.Rounded.Folder; ToolTab.Pi -> Icons.Rounded.Settings; ToolTab.CodeServer -> Icons.Rounded.Code }, contentDescription = null) },
-                    text = { Text(when (tab) { ToolTab.Terminal -> "Shell"; ToolTab.Files -> "Files"; ToolTab.Pi -> "Pi"; ToolTab.CodeServer -> "Code" }) }
+                    text = { Text(when (tab) { ToolTab.Terminal -> strings.toolsTerminal; ToolTab.Files -> strings.toolsFiles; ToolTab.Pi -> strings.toolsPi; ToolTab.CodeServer -> strings.toolsCode }) }
                 )
             }
         }
