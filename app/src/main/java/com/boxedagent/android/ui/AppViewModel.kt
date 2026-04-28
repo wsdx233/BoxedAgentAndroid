@@ -49,7 +49,7 @@ data class ServerProfile(
 )
 
 data class UiEvent(val id: Long = System.nanoTime(), val message: String)
-data class ComposerInsert(val id: Long = System.nanoTime(), val sessionId: String?, val text: String)
+data class ComposerInsert(val id: Long = System.nanoTime(), val sessionId: String?, val text: String, val replace: Boolean = false)
 
 data class AppUiState(
     val baseUrl: String = DEFAULT_BASE_URL,
@@ -181,6 +181,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putStringSet("fileBookmarks:$id", bookmarks.map { normalizeRelPath(it) }.distinct().sorted().toSet()).apply()
     }
     fun insertIntoComposer(text: String, returnToChat: Boolean = true) = _state.update { it.copy(composerInsert = ComposerInsert(sessionId = it.activeSessionId, text = text), selectedPanel = if (returnToChat) MainPanel.Chat else it.selectedPanel) }
+    fun setComposerDraft(sessionId: String?, text: String, returnToChat: Boolean = true) = _state.update { it.copy(composerInsert = ComposerInsert(sessionId = sessionId ?: it.activeSessionId, text = text, replace = true), selectedPanel = if (returnToChat) MainPanel.Chat else it.selectedPanel) }
     fun clearComposerInsert(id: Long) = _state.update { if (it.composerInsert?.id == id) it.copy(composerInsert = null) else it }
 
     fun connectFromState() {
@@ -516,9 +517,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun stopSession(id: String) = viewModelScope.launch { runApi("停止 Session") { api.stopSession(id); refreshAll() } }
     fun deleteSession(id: String) = viewModelScope.launch { runApi("删除 Session") { api.deleteSession(id); refreshAll() } }
     fun duplicateSession(id: String) = viewModelScope.launch { runApi("复刻 Session") { val res = api.duplicateSession(id); refreshAll(); selectSession(res.session.id) } }
-    fun forkSession(id: String, entryId: String) = viewModelScope.launch { runApi("Fork Session") { val res = api.forkSession(id, ForkSessionRequest(entryId)); refreshAll(); if (res.cancelled != true) { selectSession(res.session.id); res.text?.let { appendSystem(res.session.id, "已 Fork，原消息已放入草稿：\n$it") } } } }
+    fun cloneSession(id: String) = viewModelScope.launch {
+        try {
+            val res = api.cloneSession(id)
+            refreshAll()
+            if (res.cancelled == true) emit("Clone 已取消")
+            else {
+                selectSession(res.session.id)
+                _state.update { it.copy(selectedPanel = MainPanel.Chat) }
+                emit("Clone Session 成功")
+            }
+        } catch (e: Exception) { emit("Clone Session 失败：${e.message}") }
+    }
+    fun forkSession(id: String, entryId: String) = viewModelScope.launch { runApi("Fork Session") { val res = api.forkSession(id, ForkSessionRequest(entryId)); refreshAll(); if (res.cancelled != true) { selectSession(res.session.id); res.text?.let { setComposerDraft(res.session.id, it) } } } }
+    fun navigateSessionTree(id: String, targetId: String) = viewModelScope.launch {
+        try {
+            val res = api.navigateSessionTree(id, TreeNavigateRequest(targetId))
+            refreshAll()
+            selectSession(id)
+            if (res.editorText != null) setComposerDraft(id, res.editorText) else _state.update { it.copy(selectedPanel = MainPanel.Chat) }
+            emit("Tree 切换成功")
+        } catch (e: Exception) { emit("Tree 切换失败：${e.message}") }
+    }
 
     suspend fun loadForkMessages(sessionId: String): List<ForkMessage> = api.forkMessages(sessionId)
+    suspend fun loadSessionTree(sessionId: String): SessionTree = api.sessionTree(sessionId)
     suspend fun loadBoxModels(boxId: String): List<PiModel> = api.boxModels(boxId)
 
     fun sendPrompt(text: String, attachments: List<DraftAttachment>, sendMode: String?) = viewModelScope.launch {

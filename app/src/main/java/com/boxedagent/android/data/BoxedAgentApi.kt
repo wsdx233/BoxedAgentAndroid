@@ -125,6 +125,9 @@ class BoxedAgentApi(
     suspend fun deleteSession(id: String): OkResponse = delete("/api/sessions/${encPath(id)}")
     suspend fun abortSession(id: String): OkResponse = post("/api/sessions/${encPath(id)}/abort", UnitBody)
     suspend fun duplicateSession(id: String, body: DuplicateSessionRequest = DuplicateSessionRequest()): DuplicateSessionResponse = post("/api/sessions/${encPath(id)}/duplicate", body)
+    suspend fun cloneSession(id: String, body: CloneSessionRequest = CloneSessionRequest()): CloneSessionResponse = post("/api/sessions/${encPath(id)}/clone", body)
+    suspend fun sessionTree(id: String): SessionTree = get<SessionTreeResponse>("/api/sessions/${encPath(id)}/tree").tree
+    suspend fun navigateSessionTree(id: String, body: TreeNavigateRequest): TreeNavigateResponse = post("/api/sessions/${encPath(id)}/tree/navigate", body)
     suspend fun forkMessages(id: String): List<ForkMessage> = get<ForkMessagesResponse>("/api/sessions/${encPath(id)}/fork-messages").messages
     suspend fun forkSession(id: String, body: ForkSessionRequest): ForkSessionResponse = post("/api/sessions/${encPath(id)}/fork", body)
     suspend fun prompt(id: String, body: PromptRequest): PromptResponse = post("/api/sessions/${encPath(id)}/prompt", body)

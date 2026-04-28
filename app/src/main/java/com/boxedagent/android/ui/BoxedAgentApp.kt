@@ -474,6 +474,7 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
     var renameSession by remember { mutableStateOf<AgentSessionRecord?>(null) }
     var deleteSession by remember { mutableStateOf<AgentSessionRecord?>(null) }
     var forkSession by remember { mutableStateOf<AgentSessionRecord?>(null) }
+    var treeSession by remember { mutableStateOf<AgentSessionRecord?>(null) }
     val sessionsForBox = state.sessions.filter { it.boxId == state.activeBoxId }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -510,6 +511,8 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
                 onSelect = { viewModel.selectSession(session.id); viewModel.setPanel(MainPanel.Chat) },
                 onStartStop = { if (session.status == "running" || session.status == "working") viewModel.stopSession(session.id) else viewModel.startSession(session.id) },
                 onRename = { renameSession = session },
+                onTree = { treeSession = session },
+                onClone = { viewModel.cloneSession(session.id) },
                 onDuplicate = { viewModel.duplicateSession(session.id) },
                 onFork = { forkSession = session },
                 onDelete = { deleteSession = session }
@@ -527,6 +530,7 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
     renameSession?.let { s -> InputDialog(localized("重命名 Session", "Rename session"), s.name, onDismiss = { renameSession = null }, onConfirm = { viewModel.renameSession(s.id, it); renameSession = null }) }
     deleteSession?.let { s -> ConfirmDialog(localized("删除 Session", "Delete session"), localized("删除", "Delete") + " ${s.name}?", onDismiss = { deleteSession = null }, onConfirm = { viewModel.deleteSession(s.id); deleteSession = null }) }
     forkSession?.let { s -> ForkDialog(s, viewModel, onDismiss = { forkSession = null }) }
+    treeSession?.let { s -> SessionTreeDialog(s, viewModel, onDismiss = { treeSession = null }) }
 }
 
 @Composable
@@ -557,7 +561,7 @@ private fun BoxCard(box: BoxRecord, active: Boolean, onSelect: () -> Unit, onSta
 }
 
 @Composable
-private fun SessionCard(session: AgentSessionRecord, active: Boolean, onSelect: () -> Unit, onStartStop: () -> Unit, onRename: () -> Unit, onDuplicate: () -> Unit, onFork: () -> Unit, onDelete: () -> Unit) {
+private fun SessionCard(session: AgentSessionRecord, active: Boolean, onSelect: () -> Unit, onStartStop: () -> Unit, onRename: () -> Unit, onTree: () -> Unit, onClone: () -> Unit, onDuplicate: () -> Unit, onFork: () -> Unit, onDelete: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     ElevatedCard(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onSelect),
@@ -575,8 +579,10 @@ private fun SessionCard(session: AgentSessionRecord, active: Boolean, onSelect: 
             Box { IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.MoreVert, contentDescription = localized("操作", "Actions")) }; DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text(if (session.status == "running" || session.status == "working") localized("停止", "Stop") else localized("启动", "Start")) }, onClick = { menu = false; onStartStop() })
                 DropdownMenuItem(text = { Text(localized("重命名", "Rename")) }, onClick = { menu = false; onRename() })
+                DropdownMenuItem(text = { Text("Tree") }, onClick = { menu = false; onTree() })
                 DropdownMenuItem(text = { Text("Fork") }, onClick = { menu = false; onFork() })
-                DropdownMenuItem(text = { Text(localized("复刻", "Duplicate")) }, onClick = { menu = false; onDuplicate() })
+                DropdownMenuItem(text = { Text("Clone") }, onClick = { menu = false; onClone() })
+                DropdownMenuItem(text = { Text(localized("复刻空配置", "Duplicate config")) }, onClick = { menu = false; onDuplicate() })
                 DropdownMenuItem(text = { Text(localized("删除", "Delete")) }, onClick = { menu = false; onDelete() })
             } }
         }
@@ -688,6 +694,101 @@ private fun ForkDialog(session: AgentSessionRecord, viewModel: AppViewModel, onD
 }
 
 @Composable
+private fun SessionTreeDialog(session: AgentSessionRecord, viewModel: AppViewModel, onDismiss: () -> Unit) {
+    var tree by remember(session.id) { mutableStateOf(SessionTree()) }
+    var loading by remember(session.id) { mutableStateOf(true) }
+    var error by remember(session.id) { mutableStateOf<String?>(null) }
+    var query by remember(session.id) { mutableStateOf("") }
+    LaunchedEffect(session.id) {
+        loading = true
+        error = null
+        runCatching { viewModel.loadSessionTree(session.id) }
+            .onSuccess { tree = it }
+            .onFailure { error = it.message }
+        loading = false
+    }
+    val nodes = tree.nodes
+    val filtered = remember(nodes, query) {
+        val q = query.trim()
+        if (q.isBlank()) nodes else nodes.filter { node ->
+            listOf(node.text, node.label.orEmpty(), node.type, node.role.orEmpty()).joinToString(" ").contains(q, ignoreCase = true)
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text(localized("关闭", "Close")) } },
+        title = { Text("Session Tree") },
+        text = {
+            Column(Modifier.heightIn(max = 560.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text(localized("按 pi /tree 方式切换当前 Session 的活动分支。选择用户消息时，原消息会放回输入框。", "Navigate this session's active branch like pi /tree. Selecting a user message puts it back into the composer."), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text(localized("搜索节点", "Search nodes")) },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 13.sp) }
+                if (!loading && nodes.isEmpty()) Text(localized("当前 Session 还没有可导航的历史。", "This session has no navigable history yet."), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!loading && nodes.isNotEmpty() && filtered.isEmpty()) Text(localized("没有匹配节点", "No matching nodes"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyColumn(Modifier.heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(filtered, key = { it.id }) { node ->
+                        SessionTreeNodeRow(node = node, onClick = { viewModel.navigateSessionTree(session.id, node.id); onDismiss() })
+                    }
+                }
+                Text("${filtered.size} / ${nodes.size} nodes · ${session.name}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    )
+}
+
+@Composable
+private fun SessionTreeNodeRow(node: SessionTreeNode, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val bg = when {
+        node.active -> colors.primaryContainer
+        node.inActivePath -> colors.surfaceContainerHigh
+        else -> colors.surfaceContainerLow
+    }
+    val roleColor = when (node.role ?: node.type) {
+        "user" -> colors.primary
+        "assistant" -> colors.tertiary
+        "toolResult" -> colors.secondary
+        else -> colors.onSurfaceVariant
+    }
+    OutlinedCard(
+        Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.outlinedCardColors(containerColor = bg),
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (node.active) colors.primary.copy(alpha = .55f) else colors.outlineVariant)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(start = (node.depth * 14).coerceAtMost(92).dp, end = 10.dp, top = 9.dp, bottom = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Surface(shape = RoundedCornerShape(7.dp), color = roleColor.copy(alpha = .13f), contentColor = roleColor) {
+                Text(treeNodeRoleLabel(node), Modifier.padding(horizontal = 6.dp, vertical = 3.dp), fontSize = 10.sp, fontWeight = FontWeight.Black)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                val line = compactText(node.label?.let { "[$it]" }, previewText(node.text, 150), node.type.takeIf { node.text.isBlank() })
+                Text(line, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = colors.onSurface)
+                node.timestamp?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 10.sp, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            }
+            if (node.active) Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = colors.primary, modifier = Modifier.size(17.dp))
+        }
+    }
+}
+
+private fun treeNodeRoleLabel(node: SessionTreeNode): String = when {
+    node.role == "user" -> "USER"
+    node.role == "assistant" -> "AI"
+    node.role == "toolResult" -> "TOOL"
+    node.type == "compaction" -> "CMP"
+    node.type == "branch_summary" -> "SUM"
+    node.type == "model_change" -> "MODEL"
+    node.type == "thinking_level_change" -> "THINK"
+    else -> node.type.take(6).uppercase().ifBlank { "NODE" }
+}
+
+@Composable
 private fun InputDialog(title: String, initial: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var value by remember(initial) { mutableStateOf(initial) }
     AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(enabled = value.isNotBlank(), onClick = { onConfirm(value.trim()) }) { Text(localized("确定", "OK")) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } }, title = { Text(title) }, text = { OutlinedTextField(value, { value = it }, singleLine = true, modifier = Modifier.fillMaxWidth()) })
@@ -729,14 +830,14 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     val lastMessage = state.activeMessages.lastOrNull()
     val latestProgressMessage = state.activeMessages.lastOrNull { it.role == "tool" || (it.role == "assistant" && it.thinking?.isNotBlank() == true) }
     val latestProgressMessageId = latestProgressMessage?.id
-    val autoOpenProgressMessageId = latestProgressMessageId.takeIf { state.activeTurn }
+    val autoOpenProgressMessageId = if (state.activeTurn && latestProgressMessageId == lastMessage?.id) latestProgressMessageId else null
     val streamingAssistantMessageId = if (state.activeTurn) state.activeMessages.lastOrNull { it.role == "assistant" }?.id else null
     val latestProgressArgsKey = latestProgressMessage?.toolArgs?.toString()?.let { "${it.length}:${it.hashCode()}" }
 
     LaunchedEffect(state.composerInsert?.id) {
         val insert = state.composerInsert ?: return@LaunchedEffect
         if (insert.sessionId == null || insert.sessionId == state.activeSessionId) {
-            text = appendComposerText(text, insert.text)
+            text = if (insert.replace) insert.text else appendComposerText(text, insert.text)
             viewModel.clearComposerInsert(insert.id)
         }
     }
@@ -833,6 +934,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                     MessageBubble(
                         message = msg,
                         autoOpenProgress = msg.id == autoOpenProgressMessageId,
+                        isLatestMessage = msg.id == lastMessage?.id,
                         streaming = msg.id == streamingAssistantMessageId,
                         onFork = { forkDialogSession = session },
                         onShowDialog = { dialogMessage = msg.text.ifBlank { msg.toolResult.orEmpty() } }
@@ -1299,7 +1401,7 @@ private fun ModelDropdown(expanded: Boolean, onDismiss: () -> Unit, state: AppUi
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, autoOpenProgress: Boolean, streaming: Boolean, onFork: () -> Unit, onShowDialog: () -> Unit) {
+private fun MessageBubble(message: ChatMessage, autoOpenProgress: Boolean, isLatestMessage: Boolean, streaming: Boolean, onFork: () -> Unit, onShowDialog: () -> Unit) {
     when (message.role) {
         "user" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             Surface(color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary, shape = RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp), modifier = Modifier.widthIn(max = 330.dp)) {
@@ -1308,12 +1410,12 @@ private fun MessageBubble(message: ChatMessage, autoOpenProgress: Boolean, strea
         }
         "assistant" -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             val hasThinking = message.thinking?.isNotBlank() == true
-            message.thinking?.takeIf { it.isNotBlank() }?.let { ExpandableBlock(localized("思考过程", "Thinking"), it, autoOpen = autoOpenProgress, stateKey = message.id, lightweight = streaming) }
+            message.thinking?.takeIf { it.isNotBlank() }?.let { ExpandableBlock(localized("思考过程", "Thinking"), it, autoOpen = autoOpenProgress, autoCollapse = !isLatestMessage, stateKey = message.id, lightweight = streaming) }
             if (message.text.isNotBlank()) MarkdownishText(message.text, lightweight = streaming) else if (!hasThinking) Spacer(Modifier.height(1.dp))
             AttachmentGallery(message.attachments)
             if (message.text.isNotBlank()) AssistantActions(message.text, onFork, onShowDialog)
         }
-        "tool" -> ToolMessageCard(message, autoOpen = autoOpenProgress)
+        "tool" -> ToolMessageCard(message, autoOpen = autoOpenProgress, autoCollapse = !isLatestMessage)
         else -> AssistChip(onClick = {}, leadingIcon = { Icon(Icons.Rounded.Warning, contentDescription = null) }, label = { Text(message.text) })
     }
 }
@@ -1430,7 +1532,7 @@ private fun inlineMarkdown(text: String, baseColor: Color, inlineCodeBackground:
 private enum class ToolKind { Read, Edit, Write, Bash, Ls, Grep, Find, Unknown }
 
 @Composable
-private fun ToolMessageCard(message: ChatMessage, autoOpen: Boolean) {
+private fun ToolMessageCard(message: ChatMessage, autoOpen: Boolean, autoCollapse: Boolean) {
     val status = message.toolStatus ?: "pending"
     val kind = toolKindForName(message.toolName)
     val accent = toolKindAccent(kind)
@@ -1439,8 +1541,14 @@ private fun ToolMessageCard(message: ChatMessage, autoOpen: Boolean) {
         "error" -> MaterialTheme.colorScheme.error.copy(alpha = .55f)
         else -> MaterialTheme.colorScheme.outlineVariant
     }
-    var open by rememberSaveable(message.id) { mutableStateOf(autoOpen || status == "running") }
-    LaunchedEffect(autoOpen, status, message.id) { if (autoOpen || status == "running") open = true }
+    var open by rememberSaveable(message.id) { mutableStateOf(autoOpen) }
+    var openedByAuto by rememberSaveable(message.id) { mutableStateOf(autoOpen) }
+    LaunchedEffect(autoOpen, autoCollapse, message.id) {
+        when {
+            autoOpen -> { open = true; openedByAuto = true }
+            autoCollapse && openedByAuto -> { open = false; openedByAuto = false }
+        }
+    }
     OutlinedCard(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -1449,7 +1557,7 @@ private fun ToolMessageCard(message: ChatMessage, autoOpen: Boolean) {
     ) {
         Column(Modifier.fillMaxWidth()) {
             Row(
-                Modifier.fillMaxWidth().clickable { open = !open }.padding(horizontal = 12.dp, vertical = 11.dp),
+                Modifier.fillMaxWidth().clickable { open = !open; openedByAuto = false }.padding(horizontal = 12.dp, vertical = 11.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(9.dp)
             ) {
@@ -2178,12 +2286,18 @@ private fun fallbackHighlightCode(code: String, language: String, dark: Boolean)
 }
 
 @Composable
-private fun ExpandableBlock(title: String, text: String, autoOpen: Boolean = false, stateKey: String = title, lightweight: Boolean = false) {
+private fun ExpandableBlock(title: String, text: String, autoOpen: Boolean = false, autoCollapse: Boolean = false, stateKey: String = title, lightweight: Boolean = false) {
     var open by rememberSaveable(stateKey) { mutableStateOf(autoOpen) }
-    LaunchedEffect(autoOpen, stateKey) { if (autoOpen) open = true }
+    var openedByAuto by rememberSaveable(stateKey) { mutableStateOf(autoOpen) }
+    LaunchedEffect(autoOpen, autoCollapse, stateKey) {
+        when {
+            autoOpen -> { open = true; openedByAuto = true }
+            autoCollapse && openedByAuto -> { open = false; openedByAuto = false }
+        }
+    }
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(10.dp)) {
-            Row(Modifier.fillMaxWidth().clickable { open = !open }, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().clickable { open = !open; openedByAuto = false }, horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.Psychology, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                     Text(title, fontWeight = FontWeight.Bold)

@@ -167,6 +167,15 @@ data class DuplicateSessionRequest(
 data class DuplicateSessionResponse(val session: AgentSessionRecord = AgentSessionRecord())
 
 @Serializable
+data class CloneSessionRequest(val name: String? = null)
+
+@Serializable
+data class CloneSessionResponse(
+    val session: AgentSessionRecord = AgentSessionRecord(),
+    val cancelled: Boolean? = null
+)
+
+@Serializable
 data class ForkMessage(val entryId: String = "", val text: String = "")
 
 @Serializable
@@ -180,6 +189,41 @@ data class ForkSessionResponse(
     val session: AgentSessionRecord = AgentSessionRecord(),
     val text: String? = null,
     val cancelled: Boolean? = null
+)
+
+@Serializable
+data class SessionTreeNode(
+    val id: String = "",
+    val parentId: String? = null,
+    val depth: Int = 0,
+    val type: String = "",
+    val role: String? = null,
+    val text: String = "",
+    val timestamp: String? = null,
+    val label: String? = null,
+    val active: Boolean = false,
+    val inActivePath: Boolean = false
+)
+
+@Serializable
+data class SessionTree(
+    val nodes: List<SessionTreeNode> = emptyList(),
+    val activeId: String? = null,
+    val activePathIds: List<String> = emptyList(),
+    val entryCount: Int = 0
+)
+
+@Serializable
+data class SessionTreeResponse(val tree: SessionTree = SessionTree())
+
+@Serializable
+data class TreeNavigateRequest(val targetId: String)
+
+@Serializable
+data class TreeNavigateResponse(
+    val session: AgentSessionRecord = AgentSessionRecord(),
+    val editorText: String? = null,
+    val activeId: String? = null
 )
 
 @Serializable
