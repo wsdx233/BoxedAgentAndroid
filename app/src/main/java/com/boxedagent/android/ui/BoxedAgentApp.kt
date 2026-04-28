@@ -141,7 +141,7 @@ private val ZhStrings = AppStrings(
     settingsSubtitle = "服务器连接、外观与语言",
     close = "关闭",
     connectionTitle = "连接 BoxedAgent",
-    connectionDesc = "输入服务器地址和 Token。",
+    connectionDesc = "选择已有服务器，或新增一个连接。",
     apiUrl = "API 地址",
     token = "Token（未启用认证可留空）",
     connect = "连接 / 登录",
@@ -180,7 +180,7 @@ private val EnStrings = AppStrings(
     settingsSubtitle = "Server connections, appearance and language",
     close = "Close",
     connectionTitle = "Connect to BoxedAgent",
-    connectionDesc = "Enter server URL and token.",
+    connectionDesc = "Choose an existing server or add a connection.",
     apiUrl = "API URL",
     token = "Token (optional when auth is disabled)",
     connect = "Connect / Sign in",
@@ -221,7 +221,6 @@ private val LocalAppStrings = staticCompositionLocalOf { ZhStrings }
 @Composable private fun localized(zh: String, en: String): String = if (LocalAppStrings.current === EnStrings) en else zh
 private const val PREVIEW_LARGE_FILE_THRESHOLD_BYTES: Long = 10L * 1024L * 1024L
 private const val TOOL_CODE_COLLAPSED_CHARS = 12_000
-private const val DEFAULT_CONNECTION_URL = "http://10.0.2.2:8080"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -322,21 +321,61 @@ private fun SideOverlay(
 @Composable
 private fun ConnectionScreen(state: AppUiState, viewModel: AppViewModel, modifier: Modifier = Modifier) {
     val strings = stringsFor(state.languageMode)
-    var baseUrl by remember(state.baseUrl) { mutableStateOf(state.baseUrl) }
-    var token by remember(state.token) { mutableStateOf(state.token) }
-    Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
-        ElevatedCard(Modifier.padding(20.dp).fillMaxWidth()) {
-            Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    var editingProfile by remember { mutableStateOf<ServerProfile?>(null) }
+    var addingProfile by remember { mutableStateOf(false) }
+    var deleteProfile by remember { mutableStateOf<ServerProfile?>(null) }
+
+    LazyColumn(
+        modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(strings.connectionTitle, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
                 Text(strings.connectionDesc, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it; viewModel.updateConnectionFields(baseUrl = it) }, label = { Text(strings.apiUrl) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = token, onValueChange = { token = it; viewModel.updateConnectionFields(token = it) }, label = { Text(strings.token) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                state.connectionError?.let { AssistChip(onClick = {}, label = { Text(it) }, colors = AssistChipDefaults.assistChipColors(labelColor = MaterialTheme.colorScheme.error)) }
-                Button(onClick = { viewModel.updateConnectionFields(baseUrl, token); viewModel.connectFromState() }, enabled = !state.authLoading, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (state.authLoading) strings.connecting else strings.connect)
+            }
+        }
+        item {
+            SettingsSectionCard(title = strings.serverManagement, icon = Icons.Rounded.Cloud) {
+                if (state.serverProfiles.isEmpty()) {
+                    Text(localized("还没有服务器连接", "No server connections yet"), fontWeight = FontWeight.Bold)
+                    Text(localized("点击下方“新增服务器”添加 API 地址和 Token。", "Tap Add server below to enter the API URL and token."), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    state.serverProfiles.forEach { profile ->
+                        ServerProfileRow(
+                            profile = profile,
+                            active = profile.id == state.activeServerProfileId && state.authenticated,
+                            strings = strings,
+                            switchLabel = if (state.authLoading && profile.id == state.activeServerProfileId) strings.connecting else strings.connect,
+                            switchEnabled = !state.authLoading,
+                            editEnabled = !state.authLoading,
+                            deleteEnabled = !state.authLoading,
+                            onSwitch = { viewModel.switchServerProfile(profile.id) },
+                            onEdit = { editingProfile = profile },
+                            onDelete = { deleteProfile = profile }
+                        )
+                    }
+                }
+                OutlinedButton(onClick = { addingProfile = true }, enabled = !state.authLoading, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(strings.addServer)
                 }
             }
         }
+        if (state.authLoading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        state.connectionError?.let { error ->
+            item { AssistChip(onClick = {}, label = { Text(error) }, colors = AssistChipDefaults.assistChipColors(labelColor = MaterialTheme.colorScheme.error)) }
+        }
+    }
+
+    if (addingProfile) ServerProfileDialog(strings = strings, initial = null, onDismiss = { addingProfile = false }, onSave = { name, url, token, connect -> addingProfile = false; viewModel.saveServerProfile(null, name, url, token, connect) })
+    editingProfile?.let { profile ->
+        ServerProfileDialog(strings = strings, initial = profile, onDismiss = { editingProfile = null }, onSave = { name, url, token, connect -> editingProfile = null; viewModel.saveServerProfile(profile.id, name, url, token, connect) })
+    }
+    deleteProfile?.let { profile ->
+        ConfirmDialog(strings.delete, "${strings.delete} ${profile.name}?", onDismiss = { deleteProfile = null }, onConfirm = { viewModel.deleteServerProfile(profile.id); deleteProfile = null })
     }
 }
 
@@ -419,7 +458,18 @@ private fun SettingsChoiceChip(label: String, selected: Boolean, modifier: Modif
 }
 
 @Composable
-private fun ServerProfileRow(profile: ServerProfile, active: Boolean, strings: AppStrings, onSwitch: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
+private fun ServerProfileRow(
+    profile: ServerProfile,
+    active: Boolean,
+    strings: AppStrings,
+    switchLabel: String = strings.switchServer,
+    switchEnabled: Boolean = !active,
+    editEnabled: Boolean = true,
+    deleteEnabled: Boolean = !active,
+    onSwitch: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
     OutlinedCard(Modifier.fillMaxWidth(), border = androidx.compose.foundation.BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.primary.copy(alpha = .55f) else MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -431,9 +481,9 @@ private fun ServerProfileRow(profile: ServerProfile, active: Boolean, strings: A
                 if (active) AssistChip(onClick = {}, label = { Text(strings.active, fontSize = 11.sp) }, leadingIcon = { Icon(Icons.Rounded.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp)) })
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onSwitch, enabled = !active, modifier = Modifier.weight(1f)) { Text(strings.switchServer, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                IconButton(onClick = onEdit) { Icon(Icons.Rounded.Edit, contentDescription = strings.editServer) }
-                IconButton(onClick = onDelete, enabled = !active) { Icon(Icons.Rounded.Delete, contentDescription = strings.delete, tint = if (active) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .45f) else MaterialTheme.colorScheme.error) }
+                Button(onClick = onSwitch, enabled = switchEnabled, modifier = Modifier.weight(1f)) { Text(switchLabel, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                IconButton(onClick = onEdit, enabled = editEnabled) { Icon(Icons.Rounded.Edit, contentDescription = strings.editServer) }
+                IconButton(onClick = onDelete, enabled = deleteEnabled) { Icon(Icons.Rounded.Delete, contentDescription = strings.delete, tint = if (deleteEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .45f)) }
             }
         }
     }
@@ -442,7 +492,7 @@ private fun ServerProfileRow(profile: ServerProfile, active: Boolean, strings: A
 @Composable
 private fun ServerProfileDialog(strings: AppStrings, initial: ServerProfile?, onDismiss: () -> Unit, onSave: (String, String, String, Boolean) -> Unit) {
     var name by remember(initial?.id) { mutableStateOf(initial?.name.orEmpty()) }
-    var baseUrl by remember(initial?.id) { mutableStateOf(initial?.baseUrl ?: DEFAULT_CONNECTION_URL) }
+    var baseUrl by remember(initial?.id) { mutableStateOf(initial?.baseUrl.orEmpty()) }
     var token by remember(initial?.id) { mutableStateOf(initial?.token.orEmpty()) }
     AlertDialog(
         onDismissRequest = onDismiss,

@@ -45,7 +45,7 @@ enum class AppLanguageMode { System, Zh, En }
 data class ServerProfile(
     val id: String = "",
     val name: String = "",
-    val baseUrl: String = DEFAULT_BASE_URL,
+    val baseUrl: String = "",
     val token: String = ""
 )
 
@@ -53,7 +53,7 @@ data class UiEvent(val id: Long = System.nanoTime(), val message: String)
 data class ComposerInsert(val id: Long = System.nanoTime(), val sessionId: String?, val text: String, val replace: Boolean = false)
 
 data class AppUiState(
-    val baseUrl: String = DEFAULT_BASE_URL,
+    val baseUrl: String = "",
     val token: String = "",
     val authLoading: Boolean = false,
     val authEnabled: Boolean = false,
@@ -96,19 +96,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("boxedagent", Context.MODE_PRIVATE)
     private val initialProfiles = loadServerProfiles(prefs)
     private val initialActiveProfileId = prefs.getString("activeServerProfileId", null)?.takeIf { id -> initialProfiles.any { it.id == id } } ?: initialProfiles.firstOrNull()?.id
-    private val initialActiveProfile = initialProfiles.firstOrNull { it.id == initialActiveProfileId } ?: initialProfiles.first()
+    private val initialActiveProfile = initialActiveProfileId?.let { id -> initialProfiles.firstOrNull { it.id == id } }
     private val _state = MutableStateFlow(AppUiState(
-        baseUrl = initialActiveProfile.baseUrl,
-        token = initialActiveProfile.token,
+        baseUrl = initialActiveProfile?.baseUrl.orEmpty(),
+        token = initialActiveProfile?.token.orEmpty(),
         serverProfiles = initialProfiles,
         activeServerProfileId = initialActiveProfileId,
-        activeSessionId = loadRememberedActiveSessionId(prefs, initialActiveProfileId, initialActiveProfile.baseUrl),
+        activeSessionId = initialActiveProfile?.let { loadRememberedActiveSessionId(prefs, initialActiveProfileId, it.baseUrl) },
         themeMode = prefs.getString("themeMode", AppThemeMode.Light.name)?.let { runCatching { AppThemeMode.valueOf(it) }.getOrNull() } ?: AppThemeMode.Light,
         languageMode = prefs.getString("languageMode", AppLanguageMode.System.name)?.let { runCatching { AppLanguageMode.valueOf(it) }.getOrNull() } ?: AppLanguageMode.System
     ))
     val state: StateFlow<AppUiState> = _state
 
-    private var api = BoxedAgentApi(_state.value.baseUrl, _state.value.token)
+    private var api = BoxedAgentApi(_state.value.baseUrl.ifBlank { DEFAULT_BASE_URL }, _state.value.token)
     private var globalWs: WebSocket? = null
     private var boxWs: WebSocket? = null
     private var sessionWs: WebSocket? = null
@@ -118,7 +118,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val assistantDeltaFlushJobs = mutableMapOf<String, Job>()
 
     init {
-        viewModelScope.launch { connect(_state.value.baseUrl, _state.value.token, silent = true) }
+        initialActiveProfile?.let { profile ->
+            viewModelScope.launch { connect(profile.baseUrl, profile.token, silent = true) }
+        }
     }
 
     override fun onCleared() {
@@ -140,6 +142,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(languageMode = mode) }
     }
     fun saveServerProfile(id: String?, name: String, baseUrl: String, token: String, connectAfterSave: Boolean) {
+        if (baseUrl.isBlank()) return emit("请填写服务器地址")
         val normalizedUrl = BoxedAgentApi.normalizeBaseUrl(baseUrl)
         val profileId = id?.takeIf { existing -> _state.value.serverProfiles.any { it.id == existing } } ?: "server-${System.nanoTime()}"
         val profile = ServerProfile(profileId, name.trim().ifBlank { normalizedUrl }, normalizedUrl, token.trim())
@@ -174,12 +177,51 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun deleteServerProfile(id: String) {
         val s = _state.value
-        if (s.serverProfiles.size <= 1) return emit("至少保留一个服务器")
         val next = s.serverProfiles.filterNot { it.id == id }
-        val nextActive = if (s.activeServerProfileId == id) next.first().id else s.activeServerProfileId
+        if (next.size == s.serverProfiles.size) return emit("服务器不存在")
+        val deletingActive = s.activeServerProfileId == id
+        val nextActive = when {
+            next.isEmpty() -> null
+            deletingActive -> next.first().id
+            s.activeServerProfileId != null && next.any { it.id == s.activeServerProfileId } -> s.activeServerProfileId
+            else -> null
+        }
         persistServerProfiles(next, nextActive)
+        if (deletingActive && nextActive == null) {
+            globalWs?.close(1000, null); globalWs = null
+            boxWs?.close(1000, null); boxWs = null
+            sessionWs?.close(1000, null); sessionWs = null
+            pollingJob?.cancel(); pollingJob = null
+            prefs.edit().remove("activeServerProfileId").remove("baseUrl").remove("token").apply()
+            _state.update {
+                it.copy(
+                    serverProfiles = next,
+                    activeServerProfileId = null,
+                    baseUrl = "",
+                    token = "",
+                    authLoading = false,
+                    authEnabled = false,
+                    authenticated = false,
+                    connectionError = null,
+                    health = "—",
+                    activity = "",
+                    boxes = emptyList(),
+                    sessions = emptyList(),
+                    activeBoxId = null,
+                    activeSessionId = null,
+                    messagesBySession = emptyMap(),
+                    turnActiveBySession = emptyMap(),
+                    queueBySession = emptyMap(),
+                    statsBySession = emptyMap(),
+                    sessionModels = emptyList(),
+                    modelLoading = false
+                )
+            }
+            emit("服务器已删除")
+            return
+        }
         _state.update { it.copy(serverProfiles = next, activeServerProfileId = nextActive) }
-        if (s.activeServerProfileId == id) switchServerProfile(nextActive ?: next.first().id) else emit("服务器已删除")
+        if (deletingActive && nextActive != null) switchServerProfile(nextActive) else emit("服务器已删除")
     }
 
     fun emit(message: String) = _state.update { it.copy(event = UiEvent(message = message)) }
@@ -218,6 +260,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun connect(baseUrl: String, token: String, silent: Boolean = false) {
+        if (baseUrl.isBlank()) {
+            _state.update { it.copy(authLoading = false, authenticated = false, connectionError = "请先添加服务器") }
+            if (!silent) emit("请先添加服务器")
+            return
+        }
         _state.update { it.copy(authLoading = true, connectionError = null) }
         api.updateConnection(baseUrl, token)
         persistActiveConnection(api.baseUrl, token.trim())
@@ -758,7 +805,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val s = _state.value
         val activeId = s.activeServerProfileId
         val nextProfiles = s.serverProfiles.map { profile -> if (profile.id == activeId) profile.copy(baseUrl = baseUrl, token = token) else profile }
-        prefs.edit().putString("baseUrl", baseUrl).putString("token", token).putString("activeServerProfileId", activeId).apply()
+        val edit = prefs.edit().putString("baseUrl", baseUrl).putString("token", token)
+        if (activeId.isNullOrBlank()) edit.remove("activeServerProfileId") else edit.putString("activeServerProfileId", activeId)
+        edit.apply()
         if (nextProfiles != s.serverProfiles) {
             persistServerProfiles(nextProfiles, activeId)
             _state.update { it.copy(serverProfiles = nextProfiles) }
@@ -766,10 +815,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun persistServerProfiles(profiles: List<ServerProfile>, activeId: String?) {
-        prefs.edit()
-            .putString("serverProfilesJson", vmJson.encodeToString(profiles))
-            .putString("activeServerProfileId", activeId)
-            .apply()
+        val edit = prefs.edit().putString("serverProfilesJson", vmJson.encodeToString(profiles))
+        if (activeId.isNullOrBlank()) edit.remove("activeServerProfileId") else edit.putString("activeServerProfileId", activeId)
+        edit.apply()
     }
 
     private suspend fun runApi(label: String, block: suspend () -> Unit) {
@@ -785,12 +833,20 @@ private fun loadServerProfiles(prefs: SharedPreferences): List<ServerProfile> {
             val id = profile.id.takeIf { it.isNotBlank() } ?: return@mapNotNull null
             profile.copy(name = profile.name.ifBlank { profile.baseUrl }, baseUrl = BoxedAgentApi.normalizeBaseUrl(profile.baseUrl), token = profile.token.trim())
         }
+        .filterNot { it.isBuiltInDefaultProfile() }
         .distinctBy { it.id }
-    if (parsed.isNotEmpty()) return parsed
-    val baseUrl = BoxedAgentApi.normalizeBaseUrl(prefs.getString("baseUrl", DEFAULT_BASE_URL) ?: DEFAULT_BASE_URL)
+    if (stored != null) return parsed
+
+    val rawLegacyBaseUrl = prefs.getString("baseUrl", null)?.trim().orEmpty()
+    if (rawLegacyBaseUrl.isBlank()) return emptyList()
+    val baseUrl = BoxedAgentApi.normalizeBaseUrl(rawLegacyBaseUrl)
+    if (baseUrl == DEFAULT_BASE_URL) return emptyList()
     val token = prefs.getString("token", "")?.trim().orEmpty()
-    return listOf(ServerProfile("default", "Default", baseUrl, token))
+    return listOf(ServerProfile("server-legacy", baseUrl, baseUrl, token))
 }
+
+private fun ServerProfile.isBuiltInDefaultProfile(): Boolean =
+    id == "default" && name.equals("Default", ignoreCase = true) && baseUrl == DEFAULT_BASE_URL
 
 private fun activeSessionPreferenceKey(profileId: String?, baseUrl: String): String {
     val scope = profileId?.takeIf { it.isNotBlank() } ?: BoxedAgentApi.normalizeBaseUrl(baseUrl)
