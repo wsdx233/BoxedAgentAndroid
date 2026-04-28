@@ -705,6 +705,7 @@ private fun CreateBoxDialog(onDismiss: () -> Unit, onCreate: (String, String, St
     })
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismiss: () -> Unit) {
     var name by remember { mutableStateOf("Session") }
@@ -716,33 +717,105 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
     var loading by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
     var showFolderPicker by remember { mutableStateOf(false) }
+    var showManualModel by remember { mutableStateOf(false) }
     LaunchedEffect(box.id) { loading = true; models = runCatching { viewModel.loadBoxModels(box.id) }.getOrDefault(emptyList()); loading = false }
-    val visible = remember(models, search) { models.filter { "${it.providerNameOrNull().orEmpty()} ${it.id} ${it.name.orEmpty()}".contains(search, ignoreCase = true) }.take(80) }
-    AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(onClick = { viewModel.createSession(name, cwd, provider, model, thinking); onDismiss() }) { Text(localized("创建", "Create")) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } }, title = { Text(localized("新建 Session", "New session")) }, text = {
-        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Box: ${box.name}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(name, { name = it }, label = { Text(localized("名称", "Name")) }, singleLine = true)
-            OutlinedTextField(
-                value = cwd,
-                onValueChange = { cwd = it },
-                label = { Text(localized("工作目录", "Working directory")) },
-                singleLine = true,
-                trailingIcon = { IconButton(onClick = { showFolderPicker = true }) { Icon(Icons.Rounded.FolderOpen, contentDescription = localized("选择目录", "Choose folder")) } },
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedButton(onClick = { showFolderPicker = true }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Rounded.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(localized("浏览或新建工作目录", "Browse or create working folder"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val visible = remember(models, search) { models.filter { "${it.providerNameOrNull().orEmpty()} ${it.id} ${it.name.orEmpty()}".contains(search, ignoreCase = true) }.take(120) }
+    val selectedModel = remember(models, provider, model) { models.firstOrNull { it.id == model && it.providerNameOrNull() == provider } }
+    val manualFieldsVisible = showManualModel || (!loading && models.isEmpty())
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { Button(onClick = { viewModel.createSession(name, cwd, provider, model, thinking); onDismiss() }, enabled = name.isNotBlank()) { Text(localized("创建", "Create")) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } },
+        title = { Text(localized("新建 Session", "New session")) },
+        text = {
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 560.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                item {
+                    Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(16.dp)) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Icon(Icons.Rounded.Dns, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Column(Modifier.weight(1f)) {
+                                Text(box.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(localized("为此 Box 创建新对话", "Create a new session in this box"), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+                item {
+                    CompactSessionTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = localized("名称", "Name"),
+                        icon = Icons.Rounded.Edit
+                    )
+                }
+                item {
+                    CompactSessionTextField(
+                        value = cwd,
+                        onValueChange = { cwd = it },
+                        label = localized("工作目录", "Working directory"),
+                        icon = Icons.Rounded.FolderOpen,
+                        trailing = { IconButton(onClick = { showFolderPicker = true }) { Icon(Icons.Rounded.FolderOpen, contentDescription = localized("选择目录", "Choose folder")) } }
+                    )
+                }
+                item {
+                    OutlinedButton(onClick = { showFolderPicker = true }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+                        Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(localized("浏览或新建工作目录", "Browse or create working folder"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                item {
+                    Text("Thinking", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        ThinkingLevels.forEach { level ->
+                            FilterChip(
+                                selected = thinking == level,
+                                onClick = { thinking = level },
+                                label = { Text(level, fontSize = 12.sp) },
+                                leadingIcon = { if (thinking == level) Icon(Icons.Rounded.Check, contentDescription = null, modifier = Modifier.size(15.dp)) }
+                            )
+                        }
+                    }
+                }
+                item {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(localized("模型", "Model"), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(modelSelectionSummary(provider, model, selectedModel), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        TextButton(onClick = { showManualModel = !showManualModel }, enabled = models.isNotEmpty()) { Text(if (showManualModel) localized("收起", "Hide") else localized("手动填写", "Manual")) }
+                    }
+                    OutlinedTextField(
+                        value = search,
+                        onValueChange = { search = it },
+                        leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                        label = { Text(localized("搜索 provider / model", "Search provider / model")) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                if (manualFieldsVisible) item {
+                    Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(16.dp), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            CompactSessionTextField(provider, { provider = it }, localized("Provider（可选）", "Provider (optional)"), Icons.Rounded.Cloud)
+                            CompactSessionTextField(model, { model = it }, localized("Model（可选）", "Model (optional)"), Icons.Rounded.AutoAwesome)
+                        }
+                    }
+                }
+                if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                items(visible, key = { "${it.providerNameOrNull()}/${it.id}" }) { item ->
+                    ModelPickerRow(
+                        model = item,
+                        selected = item.id == model && item.providerNameOrNull() == provider,
+                        compact = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { provider = item.providerNameOrNull().orEmpty(); model = item.id }
+                    )
+                }
+                if (!loading && visible.isEmpty()) item { Text(localized("没有匹配模型，可手动填写 provider / model。", "No matching models. You can enter provider / model manually."), Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
             }
-            DropdownField("Thinking", thinking, ThinkingLevels, { thinking = it })
-            OutlinedTextField(provider, { provider = it }, label = { Text(localized("Provider（可选）", "Provider (optional)")) }, singleLine = true)
-            OutlinedTextField(model, { model = it }, label = { Text(localized("Model（可选）", "Model (optional)")) }, singleLine = true)
-            OutlinedTextField(search, { search = it }, label = { Text(localized("搜索模型", "Search models")) }, singleLine = true)
-            if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-            visible.forEach { m -> AssistChip(onClick = { provider = m.providerNameOrNull().orEmpty(); model = m.id }, label = { Text("${m.providerNameOrNull() ?: "?"}/${m.name ?: m.id}", maxLines = 1, overflow = TextOverflow.Ellipsis) }) }
         }
-    })
+    )
     if (showFolderPicker) {
         SessionFolderPickerDialog(
             viewModel = viewModel,
@@ -751,6 +824,27 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
             onSelect = { selected -> cwd = selected; showFolderPicker = false }
         )
     }
+}
+
+@Composable
+private fun CompactSessionTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    icon: ImageVector,
+    trailing: @Composable (() -> Unit)? = null
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        leadingIcon = { Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp)) },
+        trailingIcon = trailing,
+        singleLine = true,
+        shape = RoundedCornerShape(14.dp),
+        textStyle = LocalTextStyle.current.copy(fontSize = 14.sp),
+        modifier = Modifier.fillMaxWidth()
+    )
 }
 
 @Composable
@@ -988,7 +1082,6 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     var showCompactMenu by remember { mutableStateOf(false) }
     var sendModeMenu by remember { mutableStateOf(false) }
     var showSearchSheet by remember { mutableStateOf(false) }
-    var createSession by remember { mutableStateOf(false) }
     var forkDialogSession by remember { mutableStateOf<AgentSessionRecord?>(null) }
     var dialogMessage by remember { mutableStateOf<String?>(null) }
     var quickActionsVisible by remember { mutableStateOf(false) }
@@ -1091,7 +1184,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             isWorking = state.activeTurn,
             onBoxes = { viewModel.setPanel(MainPanel.Boxes) },
             onTools = { viewModel.setPanel(MainPanel.Tools) },
-            onNewSession = { createSession = true }
+            onRefresh = { viewModel.refresh(); viewModel.loadSessionMessages() }
         )
         Box(Modifier.weight(1f).fillMaxWidth()) {
             LazyColumn(
@@ -1150,7 +1243,6 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             )
         }
     }
-    if (createSession) CreateSessionDialog(activeBox, viewModel, onDismiss = { createSession = false })
     forkDialogSession?.let { ForkDialog(it, viewModel, onDismiss = { forkDialogSession = null }) }
     dialogMessage?.let { MessageDialog(it, onDismiss = { dialogMessage = null }) }
     if (showSearchSheet) {
@@ -1248,7 +1340,7 @@ private fun ChatTopBar(
     isWorking: Boolean,
     onBoxes: () -> Unit,
     onTools: () -> Unit,
-    onNewSession: () -> Unit
+    onRefresh: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 8.dp, top = 10.dp, bottom = 4.dp)) {
@@ -1264,7 +1356,7 @@ private fun ChatTopBar(
             }
             if (isWorking) StatusChip("working")
             IconButton(onClick = onTools, modifier = Modifier.size(38.dp)) { Icon(Icons.Rounded.FormatListBulleted, contentDescription = "Tools", modifier = Modifier.size(28.dp), tint = colors.onSurfaceVariant) }
-            IconButton(onClick = onNewSession, modifier = Modifier.size(38.dp)) { Icon(Icons.Rounded.AddComment, contentDescription = localized("新建 Session", "New session"), modifier = Modifier.size(28.dp), tint = colors.onSurfaceVariant) }
+            IconButton(onClick = onRefresh, modifier = Modifier.size(38.dp)) { Icon(Icons.Rounded.Refresh, contentDescription = localized("刷新", "Refresh"), modifier = Modifier.size(28.dp), tint = colors.onSurfaceVariant) }
         }
         TopStatsLine(stats, autoCompact, Modifier.fillMaxWidth().padding(start = 48.dp, end = 2.dp))
     }
@@ -1433,6 +1525,61 @@ private fun ComposerIconButton(icon: androidx.compose.ui.graphics.vector.ImageVe
     }
 }
 
+@Composable
+private fun modelSelectionSummary(provider: String, model: String, selected: PiModel?): String = when {
+    selected != null -> "${selected.providerNameOrNull() ?: provider}/${selected.name ?: selected.id}"
+    provider.isBlank() && model.isBlank() -> localized("使用 Box 默认模型", "Use box default model")
+    provider.isBlank() -> model
+    model.isBlank() -> provider
+    else -> "$provider/$model"
+}
+
+private fun modelMetaParts(model: PiModel): List<String> = buildList {
+    model.providerNameOrNull()?.let { add(it) }
+    model.contextWindow?.let { add("${formatTokens(it)} ctx") }
+    model.maxTokens?.let { add("${formatTokens(it)} max") }
+    if (model.reasoning == true) add("reasoning")
+    model.input?.takeIf { it.isNotEmpty() }?.let { add(it.joinToString("/")) }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ModelPickerRow(model: PiModel, selected: Boolean, compact: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    OutlinedCard(
+        modifier = modifier.clickable(onClick = onClick),
+        colors = CardDefaults.outlinedCardColors(containerColor = if (selected) colors.primaryContainer.copy(alpha = .58f) else colors.surfaceContainerLow),
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) colors.primary.copy(alpha = .62f) else colors.outlineVariant)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = if (compact) 8.dp else 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Surface(shape = CircleShape, color = if (selected) colors.primary else colors.surfaceContainerHighest, contentColor = if (selected) colors.onPrimary else colors.primary) {
+                Icon(if (selected) Icons.Rounded.Check else Icons.Rounded.SmartToy, contentDescription = null, modifier = Modifier.padding(7.dp).size(18.dp))
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(model.name ?: model.id, fontWeight = FontWeight.SemiBold, fontSize = if (compact) 13.sp else 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(model.id, color = colors.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, fontFamily = FontFamily.Monospace)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    modelMetaParts(model).take(if (compact) 4 else 6).forEach { TinyMetaChip(it, selected = selected) }
+                }
+            }
+            if (!compact && selected) Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = colors.primary, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun TinyMetaChip(text: String, selected: Boolean = false) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = if (selected) colors.primary.copy(alpha = .12f) else colors.surfaceContainerHighest,
+        contentColor = if (selected) colors.primary else colors.onSurfaceVariant,
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) colors.primary.copy(alpha = .28f) else colors.outlineVariant)
+    ) {
+        Text(text, Modifier.padding(horizontal = 6.dp, vertical = 2.dp), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatOptionSheets(
@@ -1475,11 +1622,11 @@ private fun ChatOptionSheets(
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
                 items(models, key = { "${it.providerNameOrNull()}/${it.id}" }) { model ->
                     val selected = state.activeSession?.model == model.id && state.activeSession?.provider == model.providerNameOrNull()
-                    ListItem(
-                        headlineContent = { Text(model.name ?: model.id, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        supportingContent = { Text("${model.providerNameOrNull() ?: "unknown"} · ${model.id}${model.contextWindow?.let { " · ${formatTokens(it)} ctx" } ?: ""}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        leadingContent = { Icon(if (selected) Icons.Rounded.CheckCircle else Icons.Rounded.SmartToy, contentDescription = null, tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) },
-                        modifier = Modifier.clickable { onShowModelMenu(false); viewModel.setSessionModel(model) }
+                    ModelPickerRow(
+                        model = model,
+                        selected = selected,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                        onClick = { onShowModelMenu(false); viewModel.setSessionModel(model) }
                     )
                 }
                 if (!state.modelLoading && models.isEmpty()) item { Text(localized("没有可显示的模型", "No models"), Modifier.padding(18.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
