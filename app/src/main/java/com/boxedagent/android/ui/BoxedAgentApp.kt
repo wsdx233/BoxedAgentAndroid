@@ -715,13 +715,26 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
     var models by remember { mutableStateOf<List<PiModel>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
+    var showFolderPicker by remember { mutableStateOf(false) }
     LaunchedEffect(box.id) { loading = true; models = runCatching { viewModel.loadBoxModels(box.id) }.getOrDefault(emptyList()); loading = false }
     val visible = remember(models, search) { models.filter { "${it.providerNameOrNull().orEmpty()} ${it.id} ${it.name.orEmpty()}".contains(search, ignoreCase = true) }.take(80) }
     AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(onClick = { viewModel.createSession(name, cwd, provider, model, thinking); onDismiss() }) { Text(localized("创建", "Create")) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } }, title = { Text(localized("新建 Session", "New session")) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Box: ${box.name}", color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(name, { name = it }, label = { Text(localized("名称", "Name")) }, singleLine = true)
-            OutlinedTextField(cwd, { cwd = it }, label = { Text(localized("工作目录", "Working directory")) }, singleLine = true)
+            OutlinedTextField(
+                value = cwd,
+                onValueChange = { cwd = it },
+                label = { Text(localized("工作目录", "Working directory")) },
+                singleLine = true,
+                trailingIcon = { IconButton(onClick = { showFolderPicker = true }) { Icon(Icons.Rounded.FolderOpen, contentDescription = localized("选择目录", "Choose folder")) } },
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedButton(onClick = { showFolderPicker = true }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(localized("浏览或新建工作目录", "Browse or create working folder"), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
             DropdownField("Thinking", thinking, ThinkingLevels, { thinking = it })
             OutlinedTextField(provider, { provider = it }, label = { Text(localized("Provider（可选）", "Provider (optional)")) }, singleLine = true)
             OutlinedTextField(model, { model = it }, label = { Text(localized("Model（可选）", "Model (optional)")) }, singleLine = true)
@@ -730,6 +743,105 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
             visible.forEach { m -> AssistChip(onClick = { provider = m.providerNameOrNull().orEmpty(); model = m.id }, label = { Text("${m.providerNameOrNull() ?: "?"}/${m.name ?: m.id}", maxLines = 1, overflow = TextOverflow.Ellipsis) }) }
         }
     })
+    if (showFolderPicker) {
+        SessionFolderPickerDialog(
+            viewModel = viewModel,
+            initialCwd = cwd,
+            onDismiss = { showFolderPicker = false },
+            onSelect = { selected -> cwd = selected; showFolderPicker = false }
+        )
+    }
+}
+
+@Composable
+private fun SessionFolderPickerDialog(viewModel: AppViewModel, initialCwd: String, onDismiss: () -> Unit, onSelect: (String) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var path by remember(initialCwd) { mutableStateOf(workspaceRelPath(initialCwd)) }
+    var entries by remember { mutableStateOf<List<FileEntry>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var creating by remember { mutableStateOf(false) }
+    var createName by remember { mutableStateOf("") }
+    val invalidNameText = localized("名称不能包含 /、\\ 或 ..", "Name cannot contain /, \\ or ..")
+    val directories = remember(entries) { entries.filter { it.type == "directory" || it.type == "dir" }.sortedBy { it.name.lowercase() } }
+    fun createTargetPath(name: String): String = if (path == "." || path.isBlank()) name else "$path/$name"
+    fun reload() { scope.launch { loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) } }
+    LaunchedEffect(path) { loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(localized("选择工作目录", "Select working folder")) },
+        text = {
+            Column(Modifier.fillMaxWidth().heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    FilledTonalIconButton(onClick = { path = parentPath(path) }, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.ArrowUpward, contentDescription = localized("上级", "Up"), modifier = Modifier.size(19.dp)) }
+                    FilledTonalIconButton(onClick = { reload() }, modifier = Modifier.size(36.dp)) { Icon(Icons.Rounded.Refresh, contentDescription = localized("刷新", "Refresh"), modifier = Modifier.size(19.dp)) }
+                    OutlinedButton(onClick = { creating = true; createName = "" }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)) {
+                        Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(localized("新建目录", "New folder"), fontSize = 13.sp)
+                    }
+                }
+                Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = RoundedCornerShape(10.dp)) {
+                    Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Rounded.FolderOpen, contentDescription = null, modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
+                        Text(workspaceAbsPath(path), fontFamily = FontFamily.Monospace, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    }
+                }
+                if (creating) {
+                    Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(10.dp), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                        Row(Modifier.padding(8.dp), horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.CreateNewFolder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            OutlinedTextField(createName, { createName = it }, label = { Text(localized("目录名", "Folder name")) }, singleLine = true, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { creating = false; createName = "" }) { Text(localized("取消", "Cancel")) }
+                            Button(onClick = {
+                                val name = createName.trim()
+                                if (!isSafeFileName(name)) { error = invalidNameText; return@Button }
+                                scope.launch {
+                                    error = null
+                                    runCatching {
+                                        val target = normalizeFileBrowserPath(createTargetPath(name))
+                                        viewModel.mkdir(target)
+                                        creating = false
+                                        createName = ""
+                                        path = target
+                                    }.onFailure { error = it.message }
+                                }
+                            }, enabled = createName.isNotBlank()) { Text(localized("创建", "Create")) }
+                        }
+                    }
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                Surface(Modifier.fillMaxWidth().heightIn(min = 220.dp, max = 320.dp), color = MaterialTheme.colorScheme.surfaceContainerLowest, shape = RoundedCornerShape(12.dp), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                    LazyColumn(Modifier.fillMaxSize()) {
+                        item {
+                            ListItem(
+                                headlineContent = { Text(localized("使用当前目录", "Use current folder"), fontWeight = FontWeight.Bold) },
+                                supportingContent = { Text(workspaceAbsPath(path), fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                leadingContent = { Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                modifier = Modifier.clickable { onSelect(workspaceAbsPath(path)) }
+                            )
+                            HorizontalDivider()
+                        }
+                        items(directories, key = { it.path }) { entry ->
+                            ListItem(
+                                headlineContent = { Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                supportingContent = { Text(workspaceAbsPath(entry.path), fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                leadingContent = { Icon(Icons.Rounded.Folder, contentDescription = null, tint = Color(0xFFD6A433)) },
+                                trailingContent = { Icon(Icons.Rounded.ChevronRight, contentDescription = null) },
+                                modifier = Modifier.clickable { path = workspaceRelPath(entry.path) }
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
+                        }
+                        if (!loading && directories.isEmpty()) item { Text(localized("没有子目录", "No subfolders"), Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { onSelect(workspaceAbsPath(path)) }) { Text(localized("选择此目录", "Select this folder")) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } }
+    )
 }
 
 @Composable
@@ -3096,6 +3208,16 @@ private fun normalizeFileBrowserPath(value: String): String {
 }
 private fun bookmarkLabel(path: String): String = normalizeFileBrowserPath(path).let { normalized -> if (normalized == ".") "workspace" else normalized.split('/').lastOrNull().orEmpty().ifBlank { normalized } }
 private fun parentPath(path: String): String = if (path == "." || path.isBlank()) "." else path.split('/').dropLast(1).joinToString("/").ifBlank { "." }
+private fun workspaceRelPath(path: String): String {
+    val trimmed = path.trim()
+    val rel = when {
+        trimmed.isBlank() || trimmed == "/workspace" -> "."
+        trimmed.startsWith("/workspace/") -> trimmed.removePrefix("/workspace/")
+        trimmed.startsWith("/") -> "."
+        else -> trimmed
+    }
+    return normalizeFileBrowserPath(rel)
+}
 private fun workspaceAbsPath(path: String): String = when {
     path.startsWith("/workspace") -> path
     path == "." || path.isBlank() -> "/workspace"
