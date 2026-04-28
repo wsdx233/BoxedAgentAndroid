@@ -2,6 +2,7 @@ package com.boxedagent.android.ui
 
 import android.app.Application
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.boxedagent.android.data.*
@@ -101,6 +102,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         token = initialActiveProfile.token,
         serverProfiles = initialProfiles,
         activeServerProfileId = initialActiveProfileId,
+        activeSessionId = loadRememberedActiveSessionId(prefs, initialActiveProfileId, initialActiveProfile.baseUrl),
         themeMode = prefs.getString("themeMode", AppThemeMode.Light.name)?.let { runCatching { AppThemeMode.valueOf(it) }.getOrNull() } ?: AppThemeMode.Light,
         languageMode = prefs.getString("languageMode", AppLanguageMode.System.name)?.let { runCatching { AppLanguageMode.valueOf(it) }.getOrNull() } ?: AppLanguageMode.System
     ))
@@ -151,7 +153,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
     fun switchServerProfile(id: String) {
         val profile = _state.value.serverProfiles.firstOrNull { it.id == id } ?: return emit("服务器不存在")
-        _state.update { it.copy(activeServerProfileId = id, baseUrl = profile.baseUrl, token = profile.token) }
+        val rememberedSessionId = rememberedActiveSessionId(id, profile.baseUrl)
+        _state.update {
+            it.copy(
+                activeServerProfileId = id,
+                baseUrl = profile.baseUrl,
+                token = profile.token,
+                boxes = emptyList(),
+                sessions = emptyList(),
+                activeBoxId = null,
+                activeSessionId = rememberedSessionId,
+                messagesBySession = emptyMap(),
+                turnActiveBySession = emptyMap(),
+                queueBySession = emptyMap(),
+                statsBySession = emptyMap()
+            )
+        }
         prefs.edit().putString("activeServerProfileId", id).putString("baseUrl", profile.baseUrl).putString("token", profile.token).apply()
         viewModelScope.launch { connect(profile.baseUrl, profile.token, silent = false) }
     }
@@ -167,6 +184,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun emit(message: String) = _state.update { it.copy(event = UiEvent(message = message)) }
     fun clearEvent(id: Long) = _state.update { if (it.event?.id == id) it.copy(event = null) else it }
+
+    private fun rememberedActiveSessionId(profileId: String? = _state.value.activeServerProfileId, baseUrl: String = _state.value.baseUrl): String? =
+        loadRememberedActiveSessionId(prefs, profileId, baseUrl)
+
+    private fun rememberActiveSessionId(sessionId: String?) {
+        val key = activeSessionPreferenceKey(_state.value.activeServerProfileId, _state.value.baseUrl)
+        val edit = prefs.edit()
+        if (sessionId.isNullOrBlank()) edit.remove(key).remove("activeSessionId") else edit.putString(key, sessionId)
+        edit.apply()
+    }
+
     fun rememberedFileBrowserPath(boxId: String?): String = boxId?.takeIf { it.isNotBlank() }?.let { prefs.getString("fileBrowserPath:$it", ".") }?.takeIf { it.isNotBlank() } ?: "."
     fun rememberFileBrowserPath(boxId: String?, path: String) {
         val id = boxId?.takeIf { it.isNotBlank() } ?: return
@@ -225,6 +253,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { api.logout() }
             prefs.edit().remove("token").apply()
+            rememberActiveSessionId(null)
             globalWs?.close(1000, null); boxWs?.close(1000, null); sessionWs?.close(1000, null)
             pollingJob?.cancel()
             _state.update { old -> old.copy(token = "", authEnabled = old.authEnabled, authenticated = !old.authEnabled, boxes = emptyList(), sessions = emptyList(), activeBoxId = null, activeSessionId = null, messagesBySession = emptyMap()) }
@@ -238,10 +267,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val health = runCatching { api.health() }.getOrNull()
             val boxes = api.listBoxes()
             val sessions = api.listSessions()
+            var nextActiveSessionId: String? = null
             _state.update { old ->
-                val activeBoxId = old.activeBoxId?.takeIf { id -> boxes.any { it.id == id } } ?: boxes.firstOrNull()?.id
-                val activeSessionId = old.activeSessionId?.takeIf { id -> sessions.any { it.id == id && (activeBoxId == null || it.boxId == activeBoxId) } }
+                val selectedSession = old.activeSessionId
+                    ?.let { id -> sessions.firstOrNull { it.id == id } }
+                    ?.takeIf { session -> boxes.any { it.id == session.boxId } }
+                val activeBoxId = selectedSession?.boxId
+                    ?: old.activeBoxId?.takeIf { id -> boxes.any { it.id == id } }
+                    ?: boxes.firstOrNull()?.id
+                val activeSessionId = selectedSession?.id
                     ?: sessions.firstOrNull { activeBoxId == null || it.boxId == activeBoxId }?.id
+                nextActiveSessionId = activeSessionId
                 old.copy(
                     health = health?.docker ?: old.health,
                     boxes = boxes,
@@ -250,6 +286,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     activeSessionId = activeSessionId
                 )
             }
+            rememberActiveSessionId(nextActiveSessionId)
             watchActiveBox()
             watchActiveSession(loadMessages = false)
         } catch (e: Exception) {
@@ -287,16 +324,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectBox(id: String?) {
+        var nextSessionId: String? = null
         _state.update { old ->
-            val nextSession = old.sessions.firstOrNull { it.boxId == id }?.id
-            old.copy(activeBoxId = id, activeSessionId = nextSession)
+            nextSessionId = old.sessions.firstOrNull { it.boxId == id }?.id
+            old.copy(activeBoxId = id, activeSessionId = nextSessionId)
         }
+        rememberActiveSessionId(nextSessionId)
         watchActiveBox()
         watchActiveSession(loadMessages = true)
     }
 
     fun selectSession(id: String?) {
-        _state.update { it.copy(activeSessionId = id) }
+        val selectedSession = id?.let { sessionId -> _state.value.sessions.firstOrNull { it.id == sessionId } }
+        _state.update { it.copy(activeBoxId = selectedSession?.boxId ?: it.activeBoxId, activeSessionId = id) }
+        rememberActiveSessionId(id)
         watchActiveSession(loadMessages = true)
     }
 
@@ -502,6 +543,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun startBox(id: String) = viewModelScope.launch { runApi("启动 Box") { api.startBox(id); refreshAll() } }
     fun stopBox(id: String) = viewModelScope.launch { runApi("停止 Box") { api.stopBox(id); refreshAll() } }
     fun deleteBox(id: String, deleteWorkspace: Boolean = false) = viewModelScope.launch { runApi("删除 Box") { api.deleteBox(id, deleteWorkspace); refreshAll() } }
+    fun duplicateBox(id: String, name: String) = viewModelScope.launch { runApi("复刻 Box 配置") { val box = api.duplicateBox(id, DuplicateBoxRequest(name = name)); refreshAll(); selectBox(box.id) } }
     fun cloneBox(id: String, name: String) = viewModelScope.launch { runApi("克隆 Box") { val box = api.cloneBox(id, CloneBoxRequest(name = name)); refreshAll(); selectBox(box.id) } }
 
     fun createSession(name: String, cwd: String, provider: String?, model: String?, thinking: String?, autostart: Boolean = true) = viewModelScope.launch {
@@ -736,7 +778,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
-private fun loadServerProfiles(prefs: android.content.SharedPreferences): List<ServerProfile> {
+private fun loadServerProfiles(prefs: SharedPreferences): List<ServerProfile> {
     val stored = prefs.getString("serverProfilesJson", null)
     val parsed = stored?.let { runCatching { vmJson.decodeFromString<List<ServerProfile>>(it) }.getOrNull() }.orEmpty()
         .mapNotNull { profile ->
@@ -749,6 +791,17 @@ private fun loadServerProfiles(prefs: android.content.SharedPreferences): List<S
     val token = prefs.getString("token", "")?.trim().orEmpty()
     return listOf(ServerProfile("default", "Default", baseUrl, token))
 }
+
+private fun activeSessionPreferenceKey(profileId: String?, baseUrl: String): String {
+    val scope = profileId?.takeIf { it.isNotBlank() } ?: BoxedAgentApi.normalizeBaseUrl(baseUrl)
+    return "activeSessionId:$scope"
+}
+
+private fun loadRememberedActiveSessionId(prefs: SharedPreferences, profileId: String?, baseUrl: String): String? =
+    prefs.getString(activeSessionPreferenceKey(profileId, baseUrl), null)?.takeIf { isValidStoredSessionId(it) }
+        ?: prefs.getString("activeSessionId", null)?.takeIf { isValidStoredSessionId(it) }
+
+private fun isValidStoredSessionId(value: String): Boolean = value.isNotBlank() && value.length <= 200 && value.none { it == ';' || it == '\r' || it == '\n' }
 
 private fun normalizeRelPath(value: String): String {
     val parts = mutableListOf<String>()

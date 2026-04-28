@@ -108,6 +108,7 @@ class BoxedAgentApi(
     suspend fun listBoxes(): List<BoxRecord> = get<BoxesResponse>("/api/boxes").boxes
     suspend fun createBox(body: CreateBoxRequest): BoxRecord = post("/api/boxes", body)
     suspend fun updateBox(id: String, body: PatchBoxRequest): BoxRecord = patch("/api/boxes/${encPath(id)}", body)
+    suspend fun duplicateBox(id: String, body: DuplicateBoxRequest = DuplicateBoxRequest()): BoxRecord = post("/api/boxes/${encPath(id)}/duplicate", body)
     suspend fun cloneBox(id: String, body: CloneBoxRequest): BoxRecord = post("/api/boxes/${encPath(id)}/clone", body)
     suspend fun startBox(id: String): BoxRecord = post("/api/boxes/${encPath(id)}/start", UnitBody)
     suspend fun stopBox(id: String): BoxRecord = post("/api/boxes/${encPath(id)}/stop", UnitBody)

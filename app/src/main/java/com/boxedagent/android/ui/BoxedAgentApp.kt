@@ -469,6 +469,7 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
     var createBox by remember { mutableStateOf(false) }
     var createSession by remember { mutableStateOf(false) }
     var renameBox by remember { mutableStateOf<BoxRecord?>(null) }
+    var duplicateBox by remember { mutableStateOf<BoxRecord?>(null) }
     var cloneBox by remember { mutableStateOf<BoxRecord?>(null) }
     var deleteBox by remember { mutableStateOf<BoxRecord?>(null) }
     var renameSession by remember { mutableStateOf<AgentSessionRecord?>(null) }
@@ -492,6 +493,7 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
                 onSelect = { viewModel.selectBox(box.id) },
                 onStartStop = { if (box.status == "running") viewModel.stopBox(box.id) else viewModel.startBox(box.id) },
                 onRename = { renameBox = box },
+                onDuplicate = { duplicateBox = box },
                 onClone = { cloneBox = box },
                 onDelete = { deleteBox = box }
             )
@@ -525,6 +527,7 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
     })
     state.activeBox?.let { activeBox -> if (createSession) CreateSessionDialog(activeBox, viewModel, onDismiss = { createSession = false }) }
     renameBox?.let { box -> InputDialog(localized("重命名 Box", "Rename box"), box.name, onDismiss = { renameBox = null }, onConfirm = { viewModel.renameBox(box.id, it); renameBox = null }) }
+    duplicateBox?.let { box -> InputDialog(localized("复刻 Box 配置", "Duplicate box config"), duplicateBoxName(box.name), onDismiss = { duplicateBox = null }, onConfirm = { viewModel.duplicateBox(box.id, it); duplicateBox = null }) }
     cloneBox?.let { box -> InputDialog(localized("克隆 Box", "Clone box"), "${box.name}-clone", onDismiss = { cloneBox = null }, onConfirm = { viewModel.cloneBox(box.id, it); cloneBox = null }) }
     deleteBox?.let { box -> ConfirmDialog(localized("删除 Box", "Delete box"), localized("删除", "Delete") + " ${box.name}?", onDismiss = { deleteBox = null }, onConfirm = { viewModel.deleteBox(box.id); deleteBox = null }) }
     renameSession?.let { s -> InputDialog(localized("重命名 Session", "Rename session"), s.name, onDismiss = { renameSession = null }, onConfirm = { viewModel.renameSession(s.id, it); renameSession = null }) }
@@ -534,7 +537,7 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
 }
 
 @Composable
-private fun BoxCard(box: BoxRecord, active: Boolean, onSelect: () -> Unit, onStartStop: () -> Unit, onRename: () -> Unit, onClone: () -> Unit, onDelete: () -> Unit) {
+private fun BoxCard(box: BoxRecord, active: Boolean, onSelect: () -> Unit, onStartStop: () -> Unit, onRename: () -> Unit, onDuplicate: () -> Unit, onClone: () -> Unit, onDelete: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     ElevatedCard(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onSelect),
@@ -551,13 +554,20 @@ private fun BoxCard(box: BoxRecord, active: Boolean, onSelect: () -> Unit, onSta
                 box.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             }
             Box { IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.MoreVert, contentDescription = localized("操作", "Actions")) }; DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text(if (box.status == "running") localized("停止", "Stop") else localized("启动", "Start")) }, onClick = { menu = false; onStartStop() })
                 DropdownMenuItem(text = { Text(localized("重命名", "Rename")) }, onClick = { menu = false; onRename() })
+                DropdownMenuItem(text = { Text(if (box.status == "running") localized("停止", "Stop") else localized("启动", "Start")) }, onClick = { menu = false; onStartStop() })
+                DropdownMenuItem(text = { Text(localized("复刻配置", "Duplicate config")) }, onClick = { menu = false; onDuplicate() })
                 DropdownMenuItem(text = { Text(localized("克隆", "Clone")) }, onClick = { menu = false; onClone() })
                 DropdownMenuItem(text = { Text(localized("删除", "Delete")) }, onClick = { menu = false; onDelete() })
             } }
         }
     }
+}
+
+private fun duplicateBoxName(name: String): String {
+    val suffix = "-copy"
+    val base = name.trim().ifBlank { "box" }
+    return "${base.take(80 - suffix.length)}$suffix"
 }
 
 @Composable

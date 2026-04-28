@@ -95,6 +95,13 @@ data class CreateBoxRequest(
 )
 
 @Serializable
+data class DuplicateBoxRequest(
+    val name: String? = null,
+    val description: String? = null,
+    val autostart: Boolean = true
+)
+
+@Serializable
 data class CloneBoxRequest(
     val name: String,
     val description: String? = null,
