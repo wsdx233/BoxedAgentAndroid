@@ -238,7 +238,7 @@ class BoxedAgentApi(
     private suspend inline fun <reified T> delete(path: String): T = request("DELETE", path, null, serializer())
 
     private inline fun <reified Req> jsonBody(body: Req): RequestBody? {
-        if (body === UnitBody) return ByteArray(0).toRequestBody(JSON)
+        if (body === UnitBody) return EMPTY_BODY
         return encode(body).toRequestBody(JSON)
     }
 
@@ -270,7 +270,7 @@ class BoxedAgentApi(
     }
 
     private fun bodyForMethod(method: String, body: RequestBody?): RequestBody? = when (method) {
-        "POST", "PUT", "PATCH" -> body ?: ByteArray(0).toRequestBody(JSON)
+        "POST", "PUT", "PATCH" -> body ?: EMPTY_BODY
         else -> body
     }
 
@@ -299,6 +299,7 @@ class BoxedAgentApi(
 
     companion object {
         private val JSON = "application/json; charset=utf-8".toMediaType()
+        private val EMPTY_BODY = ByteArray(0).toRequestBody(null)
         fun normalizeBaseUrl(value: String): String {
             val trimmed = value.trim().removeSuffix("/")
             if (trimmed.isBlank()) return "http://10.0.2.2:8080"
