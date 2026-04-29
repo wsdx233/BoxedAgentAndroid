@@ -1724,18 +1724,21 @@ private fun MessageBubble(message: ChatMessage, autoOpenProgress: Boolean, isLat
     when (message.role) {
         "user" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             Surface(color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary, shape = RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp), modifier = Modifier.widthIn(max = 330.dp)) {
-                Column(Modifier.padding(12.dp)) { Text(message.text); AttachmentGallery(message.attachments) }
+                Column(Modifier.padding(12.dp)) {
+                    if (message.text.isNotBlank()) SelectionContainer { Text(message.text) }
+                    AttachmentGallery(message.attachments)
+                }
             }
         }
         "assistant" -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             val hasThinking = message.thinking?.isNotBlank() == true
             message.thinking?.takeIf { it.isNotBlank() }?.let { ExpandableBlock(localized("思考过程", "Thinking"), it, autoOpen = autoOpenProgress, autoCollapse = !isLatestMessage, stateKey = message.id, lightweight = streaming) }
-            if (message.text.isNotBlank()) MarkdownishText(message.text, lightweight = streaming) else if (!hasThinking) Spacer(Modifier.height(1.dp))
+            if (message.text.isNotBlank()) MarkdownishText(message.text, selectable = true, lightweight = streaming) else if (!hasThinking) Spacer(Modifier.height(1.dp))
             AttachmentGallery(message.attachments)
             if (message.text.isNotBlank()) AssistantActions(message.text, onFork, onShowDialog)
         }
         "tool" -> ToolMessageCard(message, autoOpen = autoOpenProgress, autoCollapse = !isLatestMessage)
-        else -> AssistChip(onClick = {}, leadingIcon = { Icon(Icons.Rounded.Warning, contentDescription = null) }, label = { Text(message.text) })
+        else -> SelectionContainer { AssistChip(onClick = {}, leadingIcon = { Icon(Icons.Rounded.Warning, contentDescription = null) }, label = { Text(message.text) }) }
     }
 }
 

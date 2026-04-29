@@ -6,6 +6,7 @@ import android.content.SharedPreferences
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.boxedagent.android.data.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -330,7 +331,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     boxes = boxes,
                     sessions = sessions,
                     activeBoxId = activeBoxId,
-                    activeSessionId = activeSessionId
+                    activeSessionId = activeSessionId,
+                    turnActiveBySession = reconcileTurnActiveWithSessionStatus(old.turnActiveBySession, sessions)
                 )
             }
             rememberActiveSessionId(nextActiveSessionId)
@@ -654,7 +656,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     displayAttachments += ChatAttachment.File(file.name, path, file.size, file.mimeType)
                 }
             }
-            val mentionedPaths = runCatching { parseFileRefs(trimmed).map { resolveWorkspaceReference(it, cwd).absPath }.toSet() }.getOrDefault(emptySet())
+            val mentionedPaths = parseFileRefs(trimmed).mapNotNull { ref -> runCatching { resolveWorkspaceReference(ref, cwd).absPath }.getOrNull() }.toSet()
             val refsToAppend = uploadedPaths.filterNot { it in mentionedPaths }
             val displayMessage = buildString {
                 append(trimmed)
@@ -782,13 +784,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun expandFileReferencesForPrompt(boxId: String, cwd: String, message: String): ExpandedFileRefs {
         val refs = parseFileRefs(message)
         if (refs.isEmpty()) return ExpandedFileRefs(message, emptyList(), emptySet())
-        val seen = linkedSetOf<String>()
+        val attempted = linkedSetOf<String>()
+        val attached = linkedSetOf<String>()
         val images = mutableListOf<ImagePayload>()
         val fileText = StringBuilder()
         refs.forEach { rawRef ->
-            val resolved = resolveWorkspaceReference(rawRef, cwd)
-            if (!seen.add(resolved.absPath)) return@forEach
-            val file = api.downloadFile(boxId, resolved.relPath)
+            val resolved = runCatching { resolveWorkspaceReference(rawRef, cwd) }.getOrNull() ?: return@forEach
+            if (!attempted.add(resolved.absPath)) return@forEach
+            val file = try {
+                api.downloadFile(boxId, resolved.relPath)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Keep normal @ tokens (npm packages, Android resources, mentions, etc.) as plain text.
+                // Missing or unreadable workspace refs simply are not embedded into the prompt.
+                return@forEach
+            }
+            attached += resolved.absPath
             val mime = file.mimeType.substringBefore(';').trim().ifBlank { guessMimeType(resolved.absPath) ?: "text/plain" }
             if (mime.startsWith("image/") || isImagePath(resolved.absPath)) {
                 images += ImagePayload(data = Base64.getEncoder().encodeToString(file.bytes), mimeType = if (mime.startsWith("image/")) mime else guessMimeType(resolved.absPath) ?: "image/png")
@@ -798,7 +810,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 fileText.append(file.bytes.toString(Charsets.UTF_8)).append("\n</file>\n")
             }
         }
-        return ExpandedFileRefs(fileText.toString() + message, images, seen)
+        return ExpandedFileRefs(if (fileText.isNotEmpty()) fileText.toString() + message else message, images, attached)
     }
 
     private fun persistActiveConnection(baseUrl: String, token: String) {
@@ -859,6 +871,12 @@ private fun loadRememberedActiveSessionId(prefs: SharedPreferences, profileId: S
 
 private fun isValidStoredSessionId(value: String): Boolean = value.isNotBlank() && value.length <= 200 && value.none { it == ';' || it == '\r' || it == '\n' }
 
+private fun reconcileTurnActiveWithSessionStatus(current: Map<String, Boolean>, sessions: List<AgentSessionRecord>): Map<String, Boolean> {
+    val next = current.filterKeys { id -> sessions.any { it.id == id } }.toMutableMap()
+    sessions.forEach { session -> next[session.id] = session.status == "working" }
+    return next
+}
+
 private fun normalizeRelPath(value: String): String {
     val parts = mutableListOf<String>()
     value.replace('\\', '/').split('/').forEach { part ->
@@ -910,13 +928,28 @@ private fun parseFileRefs(text: String): List<String> {
     val refs = mutableListOf<String>()
     val re = Regex("(^|\\s)@(?:\\\"((?:\\\\.|[^\\\"\\\\])*)\\\"|'([^']*)'|([^\\s]+))")
     re.findAll(text).forEach { match ->
-        val quoted = match.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() }?.replace(Regex("\\\\([\\\"\\\\])"), "$1")
-            ?: match.groupValues.getOrNull(3)?.takeIf { it.isNotBlank() }
-        val raw = quoted ?: match.groupValues.getOrNull(4).orEmpty().replace(Regex("[),.;:!?，。；：！？]+$"), "")
-        raw.trim().takeIf { it.isNotBlank() && !it.startsWith("@") }?.let { refs += it }
+        val doubleQuoted = match.groupValues.getOrNull(2)?.takeIf { it.isNotBlank() }?.replace(Regex("\\\\([\\\"\\\\])"), "$1")
+        val singleQuoted = match.groupValues.getOrNull(3)?.takeIf { it.isNotBlank() }
+        val isQuoted = doubleQuoted != null || singleQuoted != null
+        val raw = (doubleQuoted ?: singleQuoted ?: match.groupValues.getOrNull(4).orEmpty().replace(Regex("[),.;:!?，。；：！？]+$"), "")).trim()
+        if (raw.isBlank() || raw.startsWith("@")) return@forEach
+        if (!isQuoted && shouldSkipUnquotedAtRef(raw)) return@forEach
+        refs += raw
     }
     return refs
 }
+
+private fun shouldSkipUnquotedAtRef(rawPath: String): Boolean {
+    if (rawPath.contains("@")) return true
+    val firstSegment = rawPath.substringBefore('/').removePrefix("+")
+    val resourceType = firstSegment.substringAfter(':', firstSegment)
+    return resourceType in AndroidResourceRefTypes
+}
+
+private val AndroidResourceRefTypes = setOf(
+    "anim", "animator", "array", "attr", "bool", "color", "dimen", "drawable", "font", "fraction", "id", "integer",
+    "interpolator", "layout", "menu", "mipmap", "plurals", "raw", "string", "style", "styleable", "transition", "xml"
+)
 
 private fun resolveWorkspaceReference(input: String, cwd: String): WorkspaceRef {
     val base = normalizeWorkspacePath(cwd.ifBlank { "/workspace" })
