@@ -20,6 +20,7 @@ fun normalizePiMessages(messages: List<JsonElement>): List<ChatMessage> {
     val out = mutableListOf<ChatMessage>()
     messages.forEachIndexed { idx, element ->
         val obj = element.asObject() ?: return@forEachIndexed
+        val transport = transportMeta(obj)
         val timestamp = obj.long("timestamp") ?: System.currentTimeMillis()
         when (obj.string("role")) {
             "user" -> {
@@ -32,7 +33,8 @@ fun normalizePiMessages(messages: List<JsonElement>): List<ChatMessage> {
                     role = "user",
                     text = expanded.text.ifBlank { attachmentSummary(attachments) },
                     attachments = attachments,
-                    timestamp = timestamp
+                    timestamp = timestamp,
+                    transport = transport
                 )
             }
             "assistant" -> {
@@ -44,7 +46,8 @@ fun normalizePiMessages(messages: List<JsonElement>): List<ChatMessage> {
                         role = "assistant",
                         text = parts.text.ifBlank { summary },
                         thinking = parts.thinking.ifBlank { null },
-                        timestamp = timestamp
+                        timestamp = timestamp,
+                        transport = transport
                     )
                 }
                 parts.tools.forEachIndexed { toolIdx, tool ->
@@ -56,7 +59,8 @@ fun normalizePiMessages(messages: List<JsonElement>): List<ChatMessage> {
                         toolCallId = tool.toolCallId,
                         toolName = tool.toolName,
                         toolArgs = tool.toolArgs,
-                        toolStatus = "pending"
+                        toolStatus = "pending",
+                        transport = transport
                     )
                     out += msg
                     tool.toolCallId?.let { toolCalls[it] = out.lastIndex }
@@ -75,13 +79,35 @@ fun normalizePiMessages(messages: List<JsonElement>): List<ChatMessage> {
                     toolArgs = obj["args"] ?: obj["arguments"] ?: prior?.toolArgs,
                     toolStatus = if (obj.boolean("isError") == true) "error" else "done",
                     toolResult = contentToText(obj["content"]).ifBlank { resultToText(obj["result"]).ifBlank { pretty(element) } },
-                    timestamp = timestamp
+                    timestamp = timestamp,
+                    transport = transport
                 )
-                if (priorIndex != null) out[priorIndex] = msg else out += msg
+                if (priorIndex != null) out[priorIndex] = if (transport == null && prior?.transport != null) msg.copy(transport = prior.transport) else msg else out += msg
             }
         }
     }
     return out
+}
+
+fun transportMeta(obj: JsonObject): ChatMessageTransportMeta? {
+    val meta = obj.obj("__boxedagent") ?: return null
+    val messageId = meta.string("messageId") ?: return null
+    return ChatMessageTransportMeta(
+        messageId = messageId,
+        truncated = meta.boolean("truncated") == true,
+        totalChars = meta.long("totalChars"),
+        shownChars = meta.long("shownChars"),
+        omittedChars = meta.long("omittedChars"),
+        paths = (meta["paths"] as? JsonArray).orEmpty().mapNotNull { item ->
+            val path = item.asObject() ?: return@mapNotNull null
+            ChatMessageTruncationPath(
+                path = path.string("path") ?: return@mapNotNull null,
+                totalChars = path.long("totalChars") ?: 0,
+                shownChars = path.long("shownChars") ?: 0,
+                omittedChars = path.long("omittedChars") ?: 0
+            )
+        }
+    )
 }
 
 data class ContentParts(val text: String, val thinking: String, val tools: List<ToolPart>)
@@ -233,6 +259,8 @@ fun formatBytes(value: Long): String = when {
     value >= 1024 -> "%.1fKB".format(value / 1024.0)
     else -> "${value}B"
 }
+
+fun formatCount(value: Long): String = "%,d".format(value.coerceAtLeast(0))
 
 fun formatStats(stats: SessionStats?, autoCompact: Boolean): String {
     if (stats?.tokens == null && stats?.contextUsage == null) return "context — (${if (autoCompact) "auto" else "manual"})"

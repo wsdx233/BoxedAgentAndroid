@@ -293,6 +293,9 @@ data class PromptResponse(val ok: Boolean = false, val result: JsonElement? = nu
 data class SessionMessagesResponse(val messages: List<JsonElement> = emptyList())
 
 @Serializable
+data class SessionMessageResponse(val message: JsonElement? = null)
+
+@Serializable
 data class SessionStateResponse(val state: JsonElement? = null)
 
 @Serializable
@@ -395,6 +398,22 @@ sealed interface ChatAttachment {
     ) : ChatAttachment
 }
 
+data class ChatMessageTruncationPath(
+    val path: String,
+    val totalChars: Long,
+    val shownChars: Long,
+    val omittedChars: Long
+)
+
+data class ChatMessageTransportMeta(
+    val messageId: String,
+    val truncated: Boolean,
+    val totalChars: Long? = null,
+    val shownChars: Long? = null,
+    val omittedChars: Long? = null,
+    val paths: List<ChatMessageTruncationPath> = emptyList()
+)
+
 data class ChatMessage(
     val id: String,
     val role: String,
@@ -406,7 +425,8 @@ data class ChatMessage(
     val toolName: String? = null,
     val toolArgs: JsonElement? = null,
     val toolResult: String? = null,
-    val toolStatus: String? = null
+    val toolStatus: String? = null,
+    val transport: ChatMessageTransportMeta? = null
 )
 
 data class DraftAttachment(

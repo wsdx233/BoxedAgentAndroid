@@ -132,7 +132,11 @@ class BoxedAgentApi(
     suspend fun forkMessages(id: String): List<ForkMessage> = get<ForkMessagesResponse>("/api/sessions/${encPath(id)}/fork-messages").messages
     suspend fun forkSession(id: String, body: ForkSessionRequest): ForkSessionResponse = post("/api/sessions/${encPath(id)}/fork", body)
     suspend fun prompt(id: String, body: PromptRequest): PromptResponse = post("/api/sessions/${encPath(id)}/prompt", body)
-    suspend fun messages(id: String): List<kotlinx.serialization.json.JsonElement> = get<SessionMessagesResponse>("/api/sessions/${encPath(id)}/messages").messages
+    suspend fun messages(id: String, expand: List<String> = emptyList()): List<kotlinx.serialization.json.JsonElement> {
+        val query = expand.takeIf { it.isNotEmpty() }?.joinToString(",")?.let { "?expand=${enc(it)}" }.orEmpty()
+        return get<SessionMessagesResponse>("/api/sessions/${encPath(id)}/messages$query").messages
+    }
+    suspend fun message(id: String, messageId: String): kotlinx.serialization.json.JsonElement? = get<SessionMessageResponse>("/api/sessions/${encPath(id)}/messages/${encPath(messageId)}").message
     suspend fun sessionState(id: String): SessionStateResponse = get("/api/sessions/${encPath(id)}/state")
     suspend fun sessionStats(id: String): SessionStats? = get<SessionStatsResponse>("/api/sessions/${encPath(id)}/stats").stats
     suspend fun sessionModels(id: String): List<PiModel> = get<ModelsResponse>("/api/sessions/${encPath(id)}/models").models

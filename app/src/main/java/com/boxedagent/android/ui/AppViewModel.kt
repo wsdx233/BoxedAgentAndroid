@@ -117,6 +117,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val assistantDeltaLock = Any()
     private val pendingAssistantDeltas = mutableMapOf<String, AssistantDeltaBuffer>()
     private val assistantDeltaFlushJobs = mutableMapOf<String, Job>()
+    private val expandingMessageIds = mutableSetOf<String>()
 
     init {
         initialActiveProfile?.let { profile ->
@@ -421,6 +422,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 _state.update { it.copy(messagesLoading = false) }
                 emit("加载消息失败：${e.message}")
+            }
+        }
+    }
+
+    fun expandMessage(messageId: String, sessionId: String? = null) {
+        val id = sessionId ?: _state.value.activeSessionId ?: return
+        if (messageId.isBlank()) return
+        synchronized(expandingMessageIds) {
+            if (!expandingMessageIds.add(messageId)) return
+        }
+        viewModelScope.launch {
+            try {
+                val message = api.message(id, messageId) ?: throw ApiException("Message not found", 404)
+                val expanded = normalizePiMessages(listOf(message))
+                if (expanded.isEmpty()) return@launch
+                _state.update { old ->
+                    val current = old.messagesBySession[id].orEmpty()
+                    old.copy(messagesBySession = old.messagesBySession + (id to replaceExpandedMessage(current, messageId, expanded)))
+                }
+            } catch (e: Exception) {
+                appendSystem(id, "展开完整消息失败：${e.message}")
+            } finally {
+                synchronized(expandingMessageIds) { expandingMessageIds.remove(messageId) }
             }
         }
     }
@@ -875,6 +899,20 @@ private fun reconcileTurnActiveWithSessionStatus(current: Map<String, Boolean>, 
     val next = current.filterKeys { id -> sessions.any { it.id == id } }.toMutableMap()
     sessions.forEach { session -> next[session.id] = session.status == "working" }
     return next
+}
+
+private fun replaceExpandedMessage(current: List<ChatMessage>, messageId: String, expanded: List<ChatMessage>): List<ChatMessage> {
+    val start = current.indexOfFirst { it.transport?.messageId == messageId }
+    if (start < 0) return current
+    var end = start + 1
+    while (end < current.size && current[end].transport?.messageId == messageId) end++
+    val replacement = expanded.mapIndexed { index, item ->
+        item.copy(
+            id = if (index == 0) current[start].id else "${current[start].id}-expanded-$index",
+            transport = (item.transport ?: ChatMessageTransportMeta(messageId = messageId, truncated = false)).copy(truncated = false)
+        )
+    }
+    return current.take(start) + replacement + current.drop(end)
 }
 
 private fun normalizeRelPath(value: String): String {

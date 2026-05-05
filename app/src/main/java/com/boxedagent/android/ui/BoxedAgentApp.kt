@@ -1202,7 +1202,8 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                         isLatestMessage = msg.id == lastMessage?.id,
                         streaming = msg.id == streamingAssistantMessageId,
                         onFork = { forkDialogSession = session },
-                        onShowDialog = { dialogMessage = msg.text.ifBlank { msg.toolResult.orEmpty() } }
+                        onShowDialog = { dialogMessage = msg.text.ifBlank { msg.toolResult.orEmpty() } },
+                        onExpand = { viewModel.expandMessage(it, session.id) }
                     )
                 }
                 if (state.activeTurn) item { ProcessingCard() }
@@ -1720,13 +1721,14 @@ private fun ModelDropdown(expanded: Boolean, onDismiss: () -> Unit, state: AppUi
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, autoOpenProgress: Boolean, isLatestMessage: Boolean, streaming: Boolean, onFork: () -> Unit, onShowDialog: () -> Unit) {
+private fun MessageBubble(message: ChatMessage, autoOpenProgress: Boolean, isLatestMessage: Boolean, streaming: Boolean, onFork: () -> Unit, onShowDialog: () -> Unit, onExpand: (String) -> Unit) {
     when (message.role) {
         "user" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             Surface(color = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary, shape = RoundedCornerShape(22.dp, 22.dp, 6.dp, 22.dp), modifier = Modifier.widthIn(max = 330.dp)) {
                 Column(Modifier.padding(12.dp)) {
                     if (message.text.isNotBlank()) SelectionContainer { Text(message.text) }
                     AttachmentGallery(message.attachments)
+                    TruncationNotice(message.transport, onExpand)
                 }
             }
         }
@@ -1735,10 +1737,39 @@ private fun MessageBubble(message: ChatMessage, autoOpenProgress: Boolean, isLat
             message.thinking?.takeIf { it.isNotBlank() }?.let { ExpandableBlock(localized("思考过程", "Thinking"), it, autoOpen = autoOpenProgress, autoCollapse = !isLatestMessage, stateKey = message.id, lightweight = streaming) }
             if (message.text.isNotBlank()) MarkdownishText(message.text, selectable = true, lightweight = streaming) else if (!hasThinking) Spacer(Modifier.height(1.dp))
             AttachmentGallery(message.attachments)
+            TruncationNotice(message.transport, onExpand)
             if (message.text.isNotBlank()) AssistantActions(message.text, onFork, onShowDialog)
         }
-        "tool" -> ToolMessageCard(message, autoOpen = autoOpenProgress, autoCollapse = !isLatestMessage)
-        else -> SelectionContainer { AssistChip(onClick = {}, leadingIcon = { Icon(Icons.Rounded.Warning, contentDescription = null) }, label = { Text(message.text) }) }
+        "tool" -> ToolMessageCard(message, autoOpen = autoOpenProgress, autoCollapse = !isLatestMessage, onExpand = onExpand)
+        else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SelectionContainer { AssistChip(onClick = {}, leadingIcon = { Icon(Icons.Rounded.Warning, contentDescription = null) }, label = { Text(message.text) }) }
+            TruncationNotice(message.transport, onExpand)
+        }
+    }
+}
+
+@Composable
+private fun TruncationNotice(meta: ChatMessageTransportMeta?, onExpand: (String) -> Unit, modifier: Modifier = Modifier) {
+    if (meta?.truncated != true) return
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .34f),
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .24f))
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Rounded.ContentCut, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+            Text(
+                localized("已截断长消息", "Long message truncated") + (meta.omittedChars?.takeIf { it > 0 }?.let { localized("，省略 ${formatCount(it)} 字符", ", ${formatCount(it)} chars omitted") } ?: ""),
+                fontSize = 12.sp,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = { onExpand(meta.messageId) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                Icon(Icons.Rounded.OpenInFull, contentDescription = null, modifier = Modifier.size(14.dp))
+                Text(localized("展开完整消息", "Expand"), fontSize = 12.sp)
+            }
+        }
     }
 }
 
@@ -1854,7 +1885,7 @@ private fun inlineMarkdown(text: String, baseColor: Color, inlineCodeBackground:
 private enum class ToolKind { Read, Edit, Write, Bash, Ls, Grep, Find, Unknown }
 
 @Composable
-private fun ToolMessageCard(message: ChatMessage, autoOpen: Boolean, autoCollapse: Boolean) {
+private fun ToolMessageCard(message: ChatMessage, autoOpen: Boolean, autoCollapse: Boolean, onExpand: (String) -> Unit) {
     val status = message.toolStatus ?: "pending"
     val kind = toolKindForName(message.toolName)
     val accent = toolKindAccent(kind)
@@ -1901,6 +1932,7 @@ private fun ToolMessageCard(message: ChatMessage, autoOpen: Boolean, autoCollaps
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .72f))
                 ToolPreview(message)
             }
+            TruncationNotice(message.transport, onExpand, Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp))
         }
     }
 }
