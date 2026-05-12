@@ -118,6 +118,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val pendingAssistantDeltas = mutableMapOf<String, AssistantDeltaBuffer>()
     private val assistantDeltaFlushJobs = mutableMapOf<String, Job>()
     private val expandingMessageIds = mutableSetOf<String>()
+    private var lastSyncedSelectedSessionId: String? = null
 
     init {
         initialActiveProfile?.let { profile ->
@@ -239,6 +240,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         edit.apply()
     }
 
+    private fun syncSelectedSessionCookie(sessionId: String?) {
+        if (!_state.value.authenticated || lastSyncedSelectedSessionId == sessionId) return
+        lastSyncedSelectedSessionId = sessionId
+        viewModelScope.launch {
+            runCatching {
+                if (sessionId.isNullOrBlank()) api.clearCurrentSession() else api.setCurrentSession(sessionId)
+            }.onFailure { lastSyncedSelectedSessionId = null }
+        }
+    }
+
     fun rememberedFileBrowserPath(boxId: String?): String = boxId?.takeIf { it.isNotBlank() }?.let { prefs.getString("fileBrowserPath:$it", ".") }?.takeIf { it.isNotBlank() } ?: "."
     fun rememberFileBrowserPath(boxId: String?, path: String) {
         val id = boxId?.takeIf { it.isNotBlank() } ?: return
@@ -269,6 +280,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         _state.update { it.copy(authLoading = true, connectionError = null) }
         api.updateConnection(baseUrl, token)
+        lastSyncedSelectedSessionId = null
         persistActiveConnection(api.baseUrl, token.trim())
         try {
             val status = api.authStatus()
@@ -300,7 +312,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun logout() {
         viewModelScope.launch {
+            runCatching { api.clearCurrentSession() }
             runCatching { api.logout() }
+            lastSyncedSelectedSessionId = null
             prefs.edit().remove("token").apply()
             rememberActiveSessionId(null)
             globalWs?.close(1000, null); boxWs?.close(1000, null); sessionWs?.close(1000, null)
@@ -337,6 +351,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             rememberActiveSessionId(nextActiveSessionId)
+            syncSelectedSessionCookie(nextActiveSessionId)
             watchActiveBox()
             watchActiveSession(loadMessages = false)
         } catch (e: Exception) {
@@ -380,6 +395,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             old.copy(activeBoxId = id, activeSessionId = nextSessionId)
         }
         rememberActiveSessionId(nextSessionId)
+        syncSelectedSessionCookie(nextSessionId)
         watchActiveBox()
         watchActiveSession(loadMessages = true)
     }
@@ -388,6 +404,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val selectedSession = id?.let { sessionId -> _state.value.sessions.firstOrNull { it.id == sessionId } }
         _state.update { it.copy(activeBoxId = selectedSession?.boxId ?: it.activeBoxId, activeSessionId = id) }
         rememberActiveSessionId(id)
+        syncSelectedSessionCookie(id)
         watchActiveSession(loadMessages = true)
     }
 
@@ -477,10 +494,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             "tool_execution_start" -> {
                 flushAssistantDeltas(sessionId)
                 setTurnActive(sessionId, true)
-                upsertTool(sessionId, event.string("toolCallId") ?: "${event.string("toolName")}-${System.currentTimeMillis()}", event.string("toolName") ?: "tool", event["args"], null, "running")
+                upsertTool(sessionId, event.string("toolCallId") ?: "${event.string("toolName")}-${System.currentTimeMillis()}", event.string("toolName") ?: "tool", event["args"], null, null, "running")
             }
-            "tool_execution_update" -> upsertTool(sessionId, event.string("toolCallId") ?: "${event.string("toolName")}-${System.currentTimeMillis()}", event.string("toolName") ?: "tool", event["args"], resultToText(event["partialResult"]), "running")
-            "tool_execution_end" -> { flushAssistantDeltas(sessionId); upsertTool(sessionId, event.string("toolCallId") ?: "${event.string("toolName")}-${System.currentTimeMillis()}", event.string("toolName") ?: "tool", event["args"], resultToText(event["result"]), if (event.boolean("isError") == true) "error" else "done") }
+            "tool_execution_update" -> upsertTool(sessionId, event.string("toolCallId") ?: "${event.string("toolName")}-${System.currentTimeMillis()}", event.string("toolName") ?: "tool", event["args"], resultToText(event["partialResult"]), toolResultMeta(event["partialResult"]), "running")
+            "tool_execution_end" -> { flushAssistantDeltas(sessionId); upsertTool(sessionId, event.string("toolCallId") ?: "${event.string("toolName")}-${System.currentTimeMillis()}", event.string("toolName") ?: "tool", event["args"], resultToText(event["result"]), toolResultMeta(event["result"]), if (event.boolean("isError") == true) "error" else "done") }
             "queue_update" -> _state.update { old -> old.copy(queueBySession = old.queueBySession + (sessionId to QueueState(event.arrayStrings("steering"), event.arrayStrings("followUp")))) }
             "compaction_start" -> { setTurnActive(sessionId, true); appendSystem(sessionId, "正在压缩上下文：${event.string("reason") ?: "manual"}") }
             "compaction_end" -> {
@@ -493,14 +510,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun handleMessageUpdate(sessionId: String, delta: JsonObject) {
         when (delta.string("type")) {
-            "start", "text_start", "thinking_start", "toolcall_start" -> setTurnActive(sessionId, true)
+            "start", "text_start", "thinking_start" -> setTurnActive(sessionId, true)
             "text_delta" -> queueAssistantDelta(sessionId, textDelta = delta.string("delta") ?: "")
             "thinking_delta" -> queueAssistantDelta(sessionId, thinkingDelta = delta.string("delta") ?: "")
             "toolcall_start", "toolcall_delta", "toolcall_end" -> {
+                setTurnActive(sessionId, true)
                 flushAssistantDeltas(sessionId)
                 val tool = toolCallFromDelta(delta)
                 val id = tool.toolCallId ?: delta.string("id") ?: (delta.string("contentIndex") ?: "tool")
-                upsertTool(sessionId, id, tool.toolName ?: "tool", tool.toolArgs, null, "pending")
+                upsertTool(sessionId, id, tool.toolName ?: "tool", tool.toolArgs, null, null, "pending")
             }
             "done", "error" -> { flushAssistantDeltas(sessionId); setTurnActive(sessionId, false); refreshSessionRuntime(sessionId) }
         }
@@ -572,15 +590,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun upsertTool(sessionId: String, toolCallId: String, name: String, args: JsonElement?, result: String?, status: String) {
+    private fun upsertTool(sessionId: String, toolCallId: String, name: String, args: JsonElement?, result: String?, resultMeta: ToolResultMeta?, status: String) {
         _state.update { old ->
             val list = old.messagesBySession[sessionId].orEmpty().toMutableList()
             val idx = list.indexOfFirst { it.role == "tool" && it.toolCallId == toolCallId }
             if (idx >= 0) {
                 val current = list[idx]
-                list[idx] = current.copy(toolName = name, toolArgs = args ?: current.toolArgs, toolResult = result ?: current.toolResult, toolStatus = status, timestamp = System.currentTimeMillis())
+                list[idx] = current.copy(toolName = name, toolArgs = args ?: current.toolArgs, toolResult = result ?: current.toolResult, toolResultMeta = resultMeta ?: current.toolResultMeta, toolStatus = status, timestamp = System.currentTimeMillis())
             } else {
-                list += ChatMessage(newMessageId(), "tool", "", System.currentTimeMillis(), toolCallId = toolCallId, toolName = name, toolArgs = args, toolResult = result, toolStatus = status)
+                list += ChatMessage(newMessageId(), "tool", "", System.currentTimeMillis(), toolCallId = toolCallId, toolName = name, toolArgs = args, toolResult = result, toolResultMeta = resultMeta, toolStatus = status)
             }
             old.copy(messagesBySession = old.messagesBySession + (sessionId to list))
         }

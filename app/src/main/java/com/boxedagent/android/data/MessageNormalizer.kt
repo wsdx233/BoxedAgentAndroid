@@ -79,6 +79,7 @@ fun normalizePiMessages(messages: List<JsonElement>): List<ChatMessage> {
                     toolArgs = obj["args"] ?: obj["arguments"] ?: prior?.toolArgs,
                     toolStatus = if (obj.boolean("isError") == true) "error" else "done",
                     toolResult = contentToText(obj["content"]).ifBlank { resultToText(obj["result"]).ifBlank { pretty(element) } },
+                    toolResultMeta = toolResultMeta(obj["result"] ?: obj["content"]),
                     timestamp = timestamp,
                     transport = transport
                 )
@@ -222,6 +223,71 @@ fun resultToText(result: JsonElement?): String {
     }
     obj?.string("text")?.let { return it }
     return pretty(result)
+}
+
+fun toolResultMeta(result: JsonElement?): ToolResultMeta? {
+    if (result == null) return null
+    val records = collectRecords(result)
+    val text = if (result is JsonPrimitive) result.contentOrNull.orEmpty() else resultToText(result)
+    var totalLines = numericMeta(records, "totalLines", "total_lines", "lineCount", "line_count", "totalLineCount", "total_line_count", "linesTotal")
+    var shownLines = numericMeta(records, "shownLines", "shown_lines", "displayedLines", "displayed_lines", "returnedLines", "returned_lines", "visibleLines", "visible_lines", "outputLines", "output_lines")
+    var omittedLines = numericMeta(records, "omittedLines", "omitted_lines", "truncatedLines", "truncated_lines", "remainingLines", "remaining_lines")
+    val totalBytes = numericMeta(records, "totalBytes", "total_bytes", "byteLength", "byte_length", "size", "totalSize", "total_size")
+    val shownBytes = numericMeta(records, "shownBytes", "shown_bytes", "displayedBytes", "displayed_bytes", "returnedBytes", "returned_bytes", "outputBytes", "output_bytes")
+    var truncated = booleanMeta(records, "truncated", "isTruncated", "is_truncated", "wasTruncated", "was_truncated")
+    val label = stringMeta(records, "label", "title", "summary")
+    Regex("(?:omitted|省略)\\s*([0-9,]+)\\s*(?:more\\s*)?(?:lines?|行)", RegexOption.IGNORE_CASE).find(text)?.let { match ->
+        if (omittedLines == null) omittedLines = match.groupValues[1].replace(",", "").toLongOrNull()
+    }
+    Regex("(?:total|共)\\s*([0-9,]+)\\s*(?:lines?|行)", RegexOption.IGNORE_CASE).find(text)?.let { match ->
+        if (totalLines == null) totalLines = match.groupValues[1].replace(",", "").toLongOrNull()
+    }
+    if (truncated == null && Regex("\\b(truncated|omitted)\\b|截断|省略", RegexOption.IGNORE_CASE).containsMatchIn(text)) truncated = true
+    if (omittedLines != null && truncated != true) truncated = true
+    if (truncated == null && totalLines == null && shownLines == null && omittedLines == null && totalBytes == null && shownBytes == null && label == null) return null
+    return ToolResultMeta(truncated, totalLines, shownLines, omittedLines, totalBytes, shownBytes, label)
+}
+
+private fun collectRecords(value: JsonElement, out: MutableList<JsonObject> = mutableListOf(), depth: Int = 0): List<JsonObject> {
+    if (depth > 3) return out
+    when (value) {
+        is JsonObject -> {
+            out += value
+            listOf("metadata", "meta", "stats", "summary", "details", "truncation", "content").forEach { key ->
+                value[key]?.let { collectRecords(it, out, depth + 1) }
+            }
+        }
+        is JsonArray -> value.take(20).forEach { collectRecords(it, out, depth + 1) }
+        else -> Unit
+    }
+    return out
+}
+
+private fun numericMeta(records: List<JsonObject>, vararg keys: String): Long? {
+    for (record in records) for (key in keys) {
+        val value = (record[key] as? JsonPrimitive)?.contentOrNull?.replace(",", "")?.trim() ?: continue
+        val number = value.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 } ?: continue
+        return number.toLong()
+    }
+    return null
+}
+
+private fun booleanMeta(records: List<JsonObject>, vararg keys: String): Boolean? {
+    for (record in records) for (key in keys) {
+        when (val value = (record[key] as? JsonPrimitive)?.contentOrNull?.trim()) {
+            "true", "TRUE", "True" -> return true
+            "false", "FALSE", "False" -> return false
+        }
+    }
+    return null
+}
+
+private fun stringMeta(records: List<JsonObject>, vararg keys: String): String? {
+    for (record in records) for (key in keys) {
+        val value = (record[key] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotBlank() } ?: continue
+        return value.take(120)
+    }
+    return null
 }
 
 fun ChatMessage.preview(): String = text.ifBlank { toolResult ?: toolName ?: attachmentSummary(attachments) }

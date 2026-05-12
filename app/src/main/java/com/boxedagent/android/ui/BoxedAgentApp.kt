@@ -2173,7 +2173,7 @@ private fun ToolPreview(message: ChatMessage) {
             ToolKind.Read -> {
                 val display = result.ifBlank { message.toolArgs?.let { pretty(it) }.orEmpty() }
                 ToolPreviewHeader(localized("读取", "Read"), path, readLineSummary(args, result))
-                if (display.isNotBlank()) ToolCodeBlock(languageForPath(path).ifBlank { "text" }, display)
+                if (display.isNotBlank()) { ToolCodeBlock(languageForPath(path).ifBlank { "text" }, display); ToolMetaNotice(message.toolResultMeta, result.ifBlank { display }) }
                 else EmptyToolPreview(localized("没有可显示的读取结果", "No read output"))
             }
             ToolKind.Bash -> {
@@ -2185,6 +2185,7 @@ private fun ToolPreview(message: ChatMessage) {
                 if (result.isNotBlank()) {
                     ToolPreviewHeader(localized("输出预览", "Output"), null)
                     ToolCodeBlock("terminal", result)
+                    ToolMetaNotice(message.toolResultMeta, result)
                 }
                 if (command.isNullOrBlank() && result.isBlank()) EmptyToolPreview(localized("暂无输出", "No output yet"))
             }
@@ -2196,6 +2197,7 @@ private fun ToolPreview(message: ChatMessage) {
                 if (result.isNotBlank()) {
                     ToolPreviewHeader(localized("输出预览", "Output"), path)
                     ToolCodeBlock(localized("输出", "Output"), result)
+                    ToolMetaNotice(message.toolResultMeta, result)
                 }
                 if (message.toolArgs == null && result.isBlank()) EmptyToolPreview(localized("没有可显示的工具内容", "No tool content"))
             }
@@ -2215,6 +2217,44 @@ private fun ToolPreviewHeader(title: String, path: String?, extra: String? = nul
 @Composable
 private fun ToolCodeBlock(title: String, text: String, maxLines: Int = 18) {
     CodeBlock(title, text, maxCollapsedLines = maxLines, highlight = false)
+}
+
+@Composable
+private fun ToolMetaNotice(meta: ToolResultMeta?, text: String) {
+    val enriched = remember(meta, text) { enrichToolMeta(meta, text) } ?: return
+    val english = LocalAppStrings.current === EnStrings
+    val parts = buildList {
+        enriched.label?.takeIf { it.isNotBlank() }?.let { add(it) }
+        val shown = enriched.shownLines
+        val total = enriched.totalLines
+        val omitted = enriched.omittedLines
+        if (shown != null && total != null && total != shown) add(if (english) "shown $shown/$total lines" else "显示 $shown/$total 行")
+        else if (total != null) add(if (english) "$total lines" else "共 $total 行")
+        if (omitted != null) add(if (english) "$omitted omitted" else "省略 $omitted 行")
+        val shownBytes = enriched.shownBytes
+        val totalBytes = enriched.totalBytes
+        if (shownBytes != null && totalBytes != null && totalBytes != shownBytes) add("${formatBytes(shownBytes)}/${formatBytes(totalBytes)}")
+        else if (totalBytes != null) add(formatBytes(totalBytes))
+    }
+    if (parts.isEmpty() && enriched.truncated != true) return
+    val title = if (english) "Tool output truncated" else "工具输出已截断"
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .35f), contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+        Text(
+            listOfNotNull(if (enriched.truncated == true) title else null, parts.joinToString(" · ").takeIf { it.isNotBlank() }).joinToString(" · "),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+        )
+    }
+}
+
+private fun enrichToolMeta(meta: ToolResultMeta?, text: String): ToolResultMeta? {
+    val lines = lineCount(text).toLong()
+    var next = meta ?: return null
+    if (lines > 0 && next.shownLines == null) next = next.copy(shownLines = lines)
+    if (lines > 0 && next.totalLines == null && next.truncated != true) next = next.copy(totalLines = lines)
+    if (next.omittedLines != null && next.shownLines != null && next.totalLines == null) next = next.copy(totalLines = next.shownLines + next.omittedLines)
+    if (next.omittedLines == null && next.totalLines != null && next.shownLines != null && next.totalLines > next.shownLines) next = next.copy(omittedLines = next.totalLines - next.shownLines)
+    return next
 }
 
 @Composable
@@ -3304,18 +3344,20 @@ private fun PiSettingsTab(state: AppUiState, viewModel: AppViewModel) {
     var systemPrompt by remember(state.activeBoxId) { mutableStateOf("") }
     var appendSystem by remember(state.activeBoxId) { mutableStateOf("") }
     var agentsMd by remember(state.activeBoxId) { mutableStateOf("") }
+    var extraArgsText by remember(state.activeBoxId) { mutableStateOf("") }
     var materialized by remember(state.activeBoxId) { mutableStateOf("/workspace/.boxedagent/pi-agent") }
     var error by remember { mutableStateOf<String?>(null) }
     var ok by remember { mutableStateOf<String?>(null) }
     val savedText = localized("已保存", "Saved")
-    LaunchedEffect(state.activeBoxId) { runCatching { viewModel.getPiConfig() }.onSuccess { cfg -> provider = cfg.pi.defaultProvider.orEmpty(); model = cfg.pi.defaultModel.orEmpty(); thinking = cfg.pi.defaultThinkingLevel ?: "medium"; enabledModels = cfg.pi.enabledModels.joinToString(", "); settingsText = cfg.pi.settingsJson?.let { UiJson.encodeToString(it) } ?: "{}"; modelsText = cfg.pi.modelsJson?.let { UiJson.encodeToString(it) } ?: "{}"; envText = UiJson.encodeToString(cfg.env); systemPrompt = cfg.pi.systemPrompt.orEmpty(); appendSystem = cfg.pi.appendSystemPrompt.orEmpty(); agentsMd = cfg.pi.agentsMd.orEmpty(); materialized = cfg.materialized.piCodingAgentDir }.onFailure { error = it.message } }
+    LaunchedEffect(state.activeBoxId) { runCatching { viewModel.getPiConfig() }.onSuccess { cfg -> provider = cfg.pi.defaultProvider.orEmpty(); model = cfg.pi.defaultModel.orEmpty(); thinking = cfg.pi.defaultThinkingLevel ?: "medium"; enabledModels = cfg.pi.enabledModels.joinToString(", "); settingsText = cfg.pi.settingsJson?.let { UiJson.encodeToString(it) } ?: "{}"; modelsText = cfg.pi.modelsJson?.let { UiJson.encodeToString(it) } ?: "{}"; envText = UiJson.encodeToString(cfg.env); systemPrompt = cfg.pi.systemPrompt.orEmpty(); appendSystem = cfg.pi.appendSystemPrompt.orEmpty(); agentsMd = cfg.pi.agentsMd.orEmpty(); extraArgsText = cfg.pi.extraArgs.joinToString("\n"); materialized = cfg.materialized.piCodingAgentDir }.onFailure { error = it.message } }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { ElevatedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(14.dp)) { Text("Pi config · ${activeBox.name}", fontWeight = FontWeight.Bold); Text("PI_CODING_AGENT_DIR: $materialized", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } } }
         item { error?.let { Text(it, color = MaterialTheme.colorScheme.error) }; ok?.let { Text(it, color = Color(0xFF4ADE80)) } }
         item { SettingsCard(localized("模型与运行参数", "Model and runtime")) { OutlinedTextField(provider, { provider = it }, label = { Text(localized("默认 Provider", "Default provider")) }, singleLine = true, modifier = Modifier.fillMaxWidth()); OutlinedTextField(model, { model = it }, label = { Text(localized("默认 Model", "Default model")) }, singleLine = true, modifier = Modifier.fillMaxWidth()); DropdownField("Thinking", thinking, ThinkingLevels, { thinking = it }); OutlinedTextField(enabledModels, { enabledModels = it }, label = { Text("enabledModels") }, singleLine = true, modifier = Modifier.fillMaxWidth()) } }
         item { SettingsCard(localized("JSON 配置", "JSON config")) { CodeTextField(localized("环境变量 JSON", "Env JSON"), envText, { envText = it }); CodeTextField("models.json", modelsText, { modelsText = it }); CodeTextField(localized("settings.json 额外配置", "Extra settings.json"), settingsText, { settingsText = it }) } }
+        item { SettingsCard(localized("插件与启动参数", "Plugins and startup args")) { Text(localized("每行一个传给 pi RPC 进程的额外参数，可用于启用插件或 MCP。保存后重启 Session 生效。", "One extra pi RPC argument per line. Use this for plugins or MCP; restart sessions after saving."), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp); CodeTextField("extraArgs", extraArgsText, { extraArgsText = it }) } }
         item { SettingsCard(localized("Prompt 与项目上下文", "Prompts and context")) { CodeTextField("SYSTEM.md", systemPrompt, { systemPrompt = it }); CodeTextField("APPEND_SYSTEM.md", appendSystem, { appendSystem = it }); CodeTextField("AGENTS.md", agentsMd, { agentsMd = it }) } }
-        item { Button(onClick = { scope.launch { error = null; ok = null; runCatching { parseObject(settingsText); parseObject(modelsText); val env = parseEnv(envText); viewModel.updatePiConfig(PiConfigUpdateRequest(defaultProvider = provider.ifBlank { null }, defaultModel = model.ifBlank { null }, defaultThinkingLevel = thinking, enabledModels = enabledModels.split(',').map { it.trim() }.filter { it.isNotBlank() }, settingsJsonText = settingsText, modelsJsonText = modelsText, systemPrompt = systemPrompt, appendSystemPrompt = appendSystem, agentsMd = agentsMd, env = env)) }.onSuccess { ok = savedText }.onFailure { error = it.message } } }, modifier = Modifier.fillMaxWidth()) { Text(localized("保存 Pi 配置", "Save Pi config")) } }
+        item { Button(onClick = { scope.launch { error = null; ok = null; runCatching { parseObject(settingsText); parseObject(modelsText); val env = parseEnv(envText); viewModel.updatePiConfig(PiConfigUpdateRequest(defaultProvider = provider.ifBlank { null }, defaultModel = model.ifBlank { null }, defaultThinkingLevel = thinking, enabledModels = enabledModels.split(',').map { it.trim() }.filter { it.isNotBlank() }, settingsJsonText = settingsText, modelsJsonText = modelsText, systemPrompt = systemPrompt, appendSystemPrompt = appendSystem, agentsMd = agentsMd, extraArgs = parseExtraArgs(extraArgsText), env = env)) }.onSuccess { ok = savedText }.onFailure { error = it.message } } }, modifier = Modifier.fillMaxWidth()) { Text(localized("保存 Pi 配置", "Save Pi config")) } }
     }
 }
 
@@ -3377,6 +3419,7 @@ private fun parseObject(text: String): JsonObject {
     return parsed as? JsonObject ?: error("Must be a JSON object")
 }
 private fun parseEnv(text: String): Map<String, String> = parseObject(text).mapValues { it.value.jsonPrimitive.contentOrNull ?: it.value.toString() }
+private fun parseExtraArgs(text: String): List<String> = text.lines().map { it.trim() }.filter { it.isNotBlank() && !it.startsWith("#") }
 private fun normalizeFileBrowserPath(value: String): String {
     val parts = mutableListOf<String>()
     value.replace('\\', '/').split('/').forEach { part ->

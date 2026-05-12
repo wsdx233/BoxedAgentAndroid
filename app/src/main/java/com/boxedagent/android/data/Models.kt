@@ -350,6 +350,18 @@ data class ContextUsage(
 data class SessionStatsResponse(val stats: SessionStats? = null)
 
 @Serializable
+data class SelectedSessionRequest(val sessionId: String? = null)
+
+@Serializable
+data class SelectedSessionResponse(
+    val ok: Boolean? = null,
+    val sessionId: String? = null,
+    val activeSessionId: String? = null,
+    val boxId: String? = null,
+    val session: AgentSessionRecord? = null
+)
+
+@Serializable
 data class PiConfigResponse(
     val pi: PiBoxConfig = PiBoxConfig(),
     val env: Map<String, String> = emptyMap(),
@@ -414,6 +426,16 @@ data class ChatMessageTransportMeta(
     val paths: List<ChatMessageTruncationPath> = emptyList()
 )
 
+data class ToolResultMeta(
+    val truncated: Boolean? = null,
+    val totalLines: Long? = null,
+    val shownLines: Long? = null,
+    val omittedLines: Long? = null,
+    val totalBytes: Long? = null,
+    val shownBytes: Long? = null,
+    val label: String? = null
+)
+
 data class ChatMessage(
     val id: String,
     val role: String,
@@ -425,6 +447,7 @@ data class ChatMessage(
     val toolName: String? = null,
     val toolArgs: JsonElement? = null,
     val toolResult: String? = null,
+    val toolResultMeta: ToolResultMeta? = null,
     val toolStatus: String? = null,
     val transport: ChatMessageTransportMeta? = null
 )

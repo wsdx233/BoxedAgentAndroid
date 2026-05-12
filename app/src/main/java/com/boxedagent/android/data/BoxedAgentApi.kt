@@ -118,6 +118,10 @@ class BoxedAgentApi(
     suspend fun getPiConfig(boxId: String): PiConfigResponse = get("/api/boxes/${encPath(boxId)}/pi-config")
     suspend fun updatePiConfig(boxId: String, body: PiConfigUpdateRequest): PiConfigResponse = put("/api/boxes/${encPath(boxId)}/pi-config", body)
 
+    suspend fun getCurrentSession(): SelectedSessionResponse = get("/api/current-session")
+    suspend fun setCurrentSession(sessionId: String): SelectedSessionResponse = put("/api/current-session", SelectedSessionRequest(sessionId))
+    suspend fun clearCurrentSession(): SelectedSessionResponse = delete("/api/current-session")
+
     suspend fun listSessions(boxId: String? = null): List<AgentSessionRecord> = get<SessionsResponse>("/api/sessions${boxId?.let { "?boxId=${enc(it)}" } ?: ""}").sessions
     suspend fun createSession(body: CreateSessionRequest): AgentSessionRecord = post("/api/sessions", body)
     suspend fun startSession(id: String): AgentSessionRecord = post("/api/sessions/${encPath(id)}/start", UnitBody)
