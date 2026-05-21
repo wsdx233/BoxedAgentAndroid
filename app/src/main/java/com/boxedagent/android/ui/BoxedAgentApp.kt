@@ -571,8 +571,8 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
                 onStartStop = { if (session.status == "running" || session.status == "working") viewModel.stopSession(session.id) else viewModel.startSession(session.id) },
                 onRename = { renameSession = session },
                 onTree = { treeSession = session },
-                onClone = { viewModel.cloneSession(session.id) },
-                onDuplicate = { viewModel.duplicateSession(session.id) },
+                onClone = { viewModel.cloneSession(session.id, nextReplicatedName(session.name, "session", "-clone")) },
+                onDuplicate = { viewModel.duplicateSession(session.id, nextReplicatedName(session.name, "session", "-copy")) },
                 onFork = { forkSession = session },
                 onDelete = { deleteSession = session }
             )
@@ -584,8 +584,8 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
     })
     state.activeBox?.let { activeBox -> if (createSession) CreateSessionDialog(activeBox, viewModel, onDismiss = { createSession = false }) }
     renameBox?.let { box -> InputDialog(localized("重命名 Box", "Rename box"), box.name, onDismiss = { renameBox = null }, onConfirm = { viewModel.renameBox(box.id, it); renameBox = null }) }
-    duplicateBox?.let { box -> InputDialog(localized("复刻 Box 配置", "Duplicate box config"), duplicateBoxName(box.name), onDismiss = { duplicateBox = null }, onConfirm = { viewModel.duplicateBox(box.id, it); duplicateBox = null }) }
-    cloneBox?.let { box -> InputDialog(localized("克隆 Box", "Clone box"), "${box.name}-clone", onDismiss = { cloneBox = null }, onConfirm = { viewModel.cloneBox(box.id, it); cloneBox = null }) }
+    duplicateBox?.let { box -> InputDialog(localized("复刻 Box 配置", "Duplicate box config"), nextReplicatedName(box.name, "box", "-copy"), onDismiss = { duplicateBox = null }, onConfirm = { viewModel.duplicateBox(box.id, it); duplicateBox = null }) }
+    cloneBox?.let { box -> InputDialog(localized("克隆 Box", "Clone box"), nextReplicatedName(box.name, "box", "-clone"), onDismiss = { cloneBox = null }, onConfirm = { viewModel.cloneBox(box.id, it); cloneBox = null }) }
     deleteBox?.let { box -> ConfirmDialog(localized("删除 Box", "Delete box"), localized("删除", "Delete") + " ${box.name}?", onDismiss = { deleteBox = null }, onConfirm = { viewModel.deleteBox(box.id); deleteBox = null }) }
     renameSession?.let { s -> InputDialog(localized("重命名 Session", "Rename session"), s.name, onDismiss = { renameSession = null }, onConfirm = { viewModel.renameSession(s.id, it); renameSession = null }) }
     deleteSession?.let { s -> ConfirmDialog(localized("删除 Session", "Delete session"), localized("删除", "Delete") + " ${s.name}?", onDismiss = { deleteSession = null }, onConfirm = { viewModel.deleteSession(s.id); deleteSession = null }) }
@@ -619,12 +619,6 @@ private fun BoxCard(box: BoxRecord, active: Boolean, onSelect: () -> Unit, onSta
             } }
         }
     }
-}
-
-private fun duplicateBoxName(name: String): String {
-    val suffix = "-copy"
-    val base = name.trim().ifBlank { "box" }
-    return "${base.take(80 - suffix.length)}$suffix"
 }
 
 @Composable
@@ -958,7 +952,7 @@ private fun ForkDialog(session: AgentSessionRecord, viewModel: AppViewModel, onD
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             if (!loading && messages.isEmpty()) Text(localized("没有可 fork 的用户消息", "No user messages to fork"))
             messages.forEachIndexed { i, msg ->
-                OutlinedCard(Modifier.fillMaxWidth().clickable { viewModel.forkSession(session.id, msg.entryId); onDismiss() }) {
+                OutlinedCard(Modifier.fillMaxWidth().clickable { viewModel.forkSession(session.id, msg.entryId, nextReplicatedName(session.name, "session", "-fork")); onDismiss() }) {
                     Text("#${i + 1} ${msg.text.take(160)}", Modifier.padding(12.dp))
                 }
             }
@@ -1104,6 +1098,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
     val latestProgressMessageId = latestProgressMessage?.id
     val autoOpenProgressMessageId = if (state.activeTurn && latestProgressMessageId == lastMessage?.id) latestProgressMessageId else null
     val streamingAssistantMessageId = if (state.activeTurn) state.activeMessages.lastOrNull { it.role == "assistant" }?.id else null
+    val showWaitingCard = state.activeTurn && !lastMessage.isAgentOutputInProgress()
     val latestProgressArgsKey = latestProgressMessage?.toolArgs?.toString()?.let { "${it.length}:${it.hashCode()}" }
 
     LaunchedEffect(state.composerInsert?.id) {
@@ -1135,7 +1130,8 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
         latestProgressMessage?.toolResult?.length,
         latestProgressArgsKey,
         latestProgressMessage?.toolStatus,
-        state.activeTurn
+        state.activeTurn,
+        showWaitingCard
     ) {
         if ((state.activeMessages.isNotEmpty() || state.activeTurn) && stickToBottom) {
             withFrameNanos { }
@@ -1213,7 +1209,7 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
                         onExpand = { viewModel.expandMessage(it, session.id) }
                     )
                 }
-                if (state.activeTurn) item { ProcessingCard() }
+                if (showWaitingCard) item { ProcessingCard() }
                 item(key = "__chat_bottom") { Spacer(Modifier.height(1.dp)) }
             }
             ScrollQuickActions(
@@ -1794,6 +1790,12 @@ private fun ModelDropdown(expanded: Boolean, onDismiss: () -> Unit, state: AppUi
         models.forEach { model -> DropdownMenuItem(text = { Column { Text(model.name ?: model.id); Text("${model.providerNameOrNull() ?: "unknown"} · ${model.id}${model.contextWindow?.let { " · ${formatTokens(it)} ctx" } ?: ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } }, onClick = { onDismiss(); viewModel.setSessionModel(model) }) }
         if (!state.modelLoading && models.isEmpty()) DropdownMenuItem(text = { Text(localized("没有可显示的模型", "No models")) }, onClick = {})
     }
+}
+
+private fun ChatMessage?.isAgentOutputInProgress(): Boolean = this != null && when (role) {
+    "assistant" -> text.isNotBlank() || thinking?.isNotBlank() == true
+    "tool" -> toolStatus in setOf("pending", "running") || toolArgs != null || toolResult?.isNotBlank() == true
+    else -> false
 }
 
 @Composable

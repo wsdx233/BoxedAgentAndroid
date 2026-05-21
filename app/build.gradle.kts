@@ -46,6 +46,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    testImplementation("junit:junit:4.13.2")
     implementation("io.noties:prism4j:2.0.0") {
         exclude(group = "org.jetbrains", module = "annotations-java5")
     }

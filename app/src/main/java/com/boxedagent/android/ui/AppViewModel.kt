@@ -649,10 +649,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun startSession(id: String) = viewModelScope.launch { runApi("启动 Session") { api.startSession(id); refreshAll(); selectSession(id) } }
     fun stopSession(id: String) = viewModelScope.launch { runApi("停止 Session") { api.stopSession(id); refreshAll() } }
     fun deleteSession(id: String) = viewModelScope.launch { runApi("删除 Session") { api.deleteSession(id); refreshAll() } }
-    fun duplicateSession(id: String) = viewModelScope.launch { runApi("复刻 Session") { val res = api.duplicateSession(id); refreshAll(); selectSession(res.session.id) } }
-    fun cloneSession(id: String) = viewModelScope.launch {
+    fun duplicateSession(id: String, name: String? = null) = viewModelScope.launch { runApi("复刻 Session") { val res = api.duplicateSession(id, DuplicateSessionRequest(name = name?.trim()?.takeIf { it.isNotBlank() })); refreshAll(); selectSession(res.session.id) } }
+    fun cloneSession(id: String, name: String? = null) = viewModelScope.launch {
         try {
-            val res = api.cloneSession(id)
+            val res = api.cloneSession(id, CloneSessionRequest(name?.trim()?.takeIf { it.isNotBlank() }))
             refreshAll()
             if (res.cancelled == true) emit("Clone 已取消")
             else {
@@ -662,7 +662,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
         } catch (e: Exception) { emit("Clone Session 失败：${e.message}") }
     }
-    fun forkSession(id: String, entryId: String) = viewModelScope.launch { runApi("Fork Session") { val res = api.forkSession(id, ForkSessionRequest(entryId)); refreshAll(); if (res.cancelled != true) { selectSession(res.session.id); res.text?.let { setComposerDraft(res.session.id, it) } } } }
+    fun forkSession(id: String, entryId: String, name: String? = null) = viewModelScope.launch { runApi("Fork Session") { val res = api.forkSession(id, ForkSessionRequest(entryId, name?.trim()?.takeIf { it.isNotBlank() })); refreshAll(); if (res.cancelled != true) { selectSession(res.session.id); res.text?.let { setComposerDraft(res.session.id, it) } } } }
     fun navigateSessionTree(id: String, targetId: String) = viewModelScope.launch {
         try {
             val res = api.navigateSessionTree(id, TreeNavigateRequest(targetId))
