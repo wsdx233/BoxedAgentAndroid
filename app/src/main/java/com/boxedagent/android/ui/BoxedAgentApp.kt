@@ -6,6 +6,7 @@ import android.content.Intent
 import android.database.Cursor
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.webkit.CookieManager
 import android.webkit.MimeTypeMap
@@ -16,11 +17,16 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -85,6 +91,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.Base64
 import java.util.Locale
+import kotlin.math.PI
 import kotlin.math.max
 
 private val UiJson = Json { prettyPrint = true; ignoreUnknownKeys = true; explicitNulls = false }
@@ -1380,15 +1387,84 @@ private fun TopStatsLine(stats: SessionStats?, autoCompact: Boolean, modifier: M
 
 @Composable
 private fun ProcessingCard() {
+    var elapsedSeconds by remember { mutableStateOf(0.0) }
+    LaunchedEffect(Unit) {
+        val startTime = SystemClock.elapsedRealtime()
+        while (true) {
+            elapsedSeconds = (SystemClock.elapsedRealtime() - startTime) / 1000.0
+            delay(50)
+        }
+    }
+
+    val colors = MaterialTheme.colorScheme
     Surface(
-        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f),
-        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-        shape = RoundedCornerShape(18.dp),
+        color = colors.surfaceContainerLow.copy(alpha = 0.86f),
+        contentColor = colors.onSurface,
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.55f)),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(Modifier.padding(horizontal = 14.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.size(10.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
-            Text(localized("pi 正在处理…", "pi is working…"), fontWeight = FontWeight.SemiBold)
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            JumpingDotsIndicator(color = colors.onSurface)
+            Row(
+                Modifier.weight(1f),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    localized("等待回应", "Waiting for response"),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colors.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Text(
+                    String.format(Locale.US, "%.1fs", elapsedSeconds),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colors.onSurfaceVariant.copy(alpha = 0.72f),
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun JumpingDotsIndicator(color: Color, modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "processing-dots")
+    val progress by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(durationMillis = 1500, easing = LinearEasing)),
+        label = "processing-dots-progress"
+    )
+    Row(
+        modifier.height(28.dp).padding(bottom = 3.dp),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        repeat(3) { index ->
+            val phase = ((progress * 1500f - index * 250f).mod(1500f)) / 1500f
+            val wave = (1f - kotlin.math.abs(phase * 2f - 1f)).coerceIn(0f, 1f)
+            val easedWave = ((1f - kotlin.math.cos(wave * PI.toFloat())) / 2f).coerceIn(0f, 1f)
+            val offsetY = (-16).dp * easedWave
+            Box(
+                Modifier
+                    .offset(y = offsetY)
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(color.copy(alpha = 0.35f + 0.65f * easedWave))
+            )
         }
     }
 }
