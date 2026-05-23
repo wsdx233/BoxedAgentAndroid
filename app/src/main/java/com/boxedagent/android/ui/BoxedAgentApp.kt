@@ -1,13 +1,16 @@
 package com.boxedagent.android.ui
 
 import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.database.Cursor
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.os.SystemClock
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.webkit.CookieManager
 import android.webkit.MimeTypeMap
 import android.webkit.WebSettings
@@ -227,6 +230,7 @@ private fun stringsFor(mode: AppLanguageMode): AppStrings = when (mode) {
 private val LocalAppStrings = staticCompositionLocalOf { ZhStrings }
 @Composable private fun localized(zh: String, en: String): String = if (LocalAppStrings.current === EnStrings) en else zh
 private const val PREVIEW_LARGE_FILE_THRESHOLD_BYTES: Long = 10L * 1024L * 1024L
+private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
 private const val TOOL_CODE_COLLAPSED_CHARS = 12_000
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2200,6 +2204,7 @@ private fun fileIconForPath(path: String): ToolFileIconData {
         "csv", "tsv", "xls", "xlsx" -> fileIcon(Icons.Rounded.TableChart, "Table")
         "sql", "sqlite", "sqlite3", "db" -> fileIcon(Icons.Rounded.Storage, "Database")
         "zip", "tar", "gz", "tgz", "rar", "7z" -> fileIcon(Icons.Rounded.FolderZip, "Archive")
+        "apk" -> fileIcon(Icons.Rounded.Android, "Android package")
         "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg" -> fileIcon(Icons.Rounded.Image, "Image")
         "pdf" -> fileIcon(Icons.Rounded.PictureAsPdf, "PDF")
         "mp4", "mov", "mkv", "webm" -> fileIcon(Icons.Rounded.Movie, "Video")
@@ -3094,6 +3099,8 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
     var actionEntry by remember { mutableStateOf<FileEntry?>(null) }
     var deleteEntry by remember { mutableStateOf<FileEntry?>(null) }
     var largePreviewEntry by remember { mutableStateOf<FileEntry?>(null) }
+    var apkPermissionEntry by remember { mutableStateOf<FileEntry?>(null) }
+    var pendingApkInstallAfterPermission by remember { mutableStateOf<FileEntry?>(null) }
     var previewDownload by remember { mutableStateOf<PreviewDownloadState?>(null) }
     var previewJob by remember { mutableStateOf<Job?>(null) }
     val createDoc = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri -> val file = pendingDownload; if (uri != null && file != null) context.contentResolver.openOutputStream(uri)?.use { it.write(file.bytes) }; pendingDownload = null }
@@ -3108,22 +3115,27 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
     val previewCannotOpen = localized("无法打开预览", "Cannot open preview")
     val previewCanceled = localized("已取消预览下载", "Preview download canceled")
     val previewFailed = localized("预览失败", "Preview failed")
+    val apkPermissionDenied = localized("未授予安装未知应用权限，无法安装 APK", "APK install permission was not granted")
+    val apkSettingsFailed = localized("无法打开安装权限设置", "Cannot open APK install permission settings")
+    val apkNoInstaller = localized("没有可用的系统安装程序", "No system package installer available")
+    val apkCannotInstall = localized("无法启动 APK 安装", "Cannot start APK installation")
     val selectSessionFirst = localized("请先选择 Session", "Select a session first")
     val attachedText = localized("已附加", "Attached")
     val invalidNameText = localized("名称不能包含 /、\\ 或 ..", "Name cannot contain /, \\ or ..")
     val pathCopiedText = localized("已复制路径", "Path copied")
     DisposableEffect(Unit) { onDispose { previewJob?.cancel() } }
     fun reload() { scope.launch { loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) } }
-    fun beginPreviewDownload(entry: FileEntry) {
+    fun beginPreviewDownload(entry: FileEntry, installApk: Boolean = false) {
         previewJob?.cancel()
-        previewDownload = PreviewDownloadState(entry = entry, bytesRead = 0L, totalBytes = entry.size.takeIf { it > 0 } ?: -1L)
+        previewDownload = PreviewDownloadState(entry = entry, bytesRead = 0L, totalBytes = entry.size.takeIf { it > 0 } ?: -1L, installApk = installApk)
         previewJob = scope.launch {
             try {
                 val cached = viewModel.downloadFileToCache(entry.path) { read, total ->
-                    previewDownload = PreviewDownloadState(entry = entry, bytesRead = read, totalBytes = total.takeIf { it > 0 } ?: entry.size.takeIf { it > 0 } ?: -1L)
+                    previewDownload = PreviewDownloadState(entry = entry, bytesRead = read, totalBytes = total.takeIf { it > 0 } ?: entry.size.takeIf { it > 0 } ?: -1L, installApk = installApk)
                 }
                 previewDownload = null
-                context.openCachedPreview(cached, previewTitle, previewNoApp, previewCannotOpen) { viewModel.emit(it) }
+                if (installApk) context.installCachedApk(cached, apkNoInstaller, apkCannotInstall) { viewModel.emit(it) }
+                else context.openCachedPreview(cached, previewTitle, previewNoApp, previewCannotOpen) { viewModel.emit(it) }
             } catch (e: CancellationException) {
                 previewDownload = null
                 viewModel.emit(previewCanceled)
@@ -3133,8 +3145,20 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
             }
         }
     }
+    val installPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        val entry = pendingApkInstallAfterPermission
+        pendingApkInstallAfterPermission = null
+        if (entry != null) {
+            if (context.canInstallUnknownApks()) beginPreviewDownload(entry, installApk = true) else viewModel.emit(apkPermissionDenied)
+        }
+    }
+    fun requestApkInstall(entry: FileEntry) {
+        if (context.canInstallUnknownApks()) beginPreviewDownload(entry, installApk = true) else apkPermissionEntry = entry
+    }
     fun requestPreview(entry: FileEntry) {
-        if (entry.size >= PREVIEW_LARGE_FILE_THRESHOLD_BYTES) largePreviewEntry = entry else beginPreviewDownload(entry)
+        if (isApkFile(entry)) requestApkInstall(entry)
+        else if (entry.size >= PREVIEW_LARGE_FILE_THRESHOLD_BYTES) largePreviewEntry = entry
+        else beginPreviewDownload(entry)
     }
     fun attach(entry: FileEntry) {
         if (state.activeSessionId == null) {
@@ -3240,7 +3264,15 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
                 val bookmarked = bookmarks.contains(normalizeFileBrowserPath(entry.path))
                 ListItem(headlineContent = { Text(if (bookmarked) localized("移除书签", "Remove bookmark") else localized("添加到书签", "Add bookmark")) }, leadingContent = { Icon(if (bookmarked) Icons.Rounded.BookmarkAdded else Icons.Rounded.BookmarkAdd, contentDescription = null) }, modifier = Modifier.clickable { toggleBookmark(entry.path); actionEntry = null })
             }
-            if (entry.type == "file") ListItem(headlineContent = { Text(localized("预览打开", "Preview")) }, supportingContent = { Text(localized("下载到缓存后打开", "Download to cache and open")) }, leadingContent = { Icon(Icons.Rounded.Visibility, contentDescription = null) }, modifier = Modifier.clickable { actionEntry = null; requestPreview(entry) })
+            if (entry.type == "file") {
+                val apk = isApkFile(entry)
+                ListItem(
+                    headlineContent = { Text(if (apk) localized("安装 APK", "Install APK") else localized("预览打开", "Preview")) },
+                    supportingContent = { Text(if (apk) localized("下载后调用系统安装程序", "Download and launch system installer") else localized("下载到缓存后打开", "Download to cache and open")) },
+                    leadingContent = { Icon(if (apk) Icons.Rounded.Android else Icons.Rounded.Visibility, contentDescription = null) },
+                    modifier = Modifier.clickable { actionEntry = null; requestPreview(entry) }
+                )
+            }
             if (entry.type == "file") ListItem(headlineContent = { Text(localized("附加到消息", "Attach to message")) }, supportingContent = { Text(fileRef(workspaceAbsPath(entry.path))) }, leadingContent = { Icon(Icons.Rounded.AttachFile, contentDescription = null) }, modifier = Modifier.clickable { attach(entry); actionEntry = null })
             ListItem(headlineContent = { Text(localized("复制路径", "Copy path")) }, supportingContent = { Text(workspaceAbsPath(entry.path)) }, leadingContent = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }, modifier = Modifier.clickable { clipboard.setText(AnnotatedString(workspaceAbsPath(entry.path))); actionEntry = null; viewModel.emit(pathCopiedText) })
             if (entry.type == "file") ListItem(headlineContent = { Text(localized("下载", "Download")) }, leadingContent = { Icon(Icons.Rounded.Download, contentDescription = null) }, modifier = Modifier.clickable { scope.launch { val file = viewModel.downloadFile(entry.path); pendingDownload = file; createDoc.launch(file.name) }; actionEntry = null })
@@ -3249,6 +3281,24 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
         }
     }
     deleteEntry?.let { entry -> ConfirmDialog(localized("删除", "Delete") + " ${entry.name}", localized("确定删除", "Delete") + " ${workspaceAbsPath(entry.path)}?", onDismiss = { deleteEntry = null }, onConfirm = { scope.launch { viewModel.deleteFile(entry.path); deleteEntry = null; loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) } }) }
+    apkPermissionEntry?.let { entry ->
+        ApkInstallPermissionDialog(
+            entry = entry,
+            onDismiss = { apkPermissionEntry = null },
+            onOpenSettings = {
+                apkPermissionEntry = null
+                pendingApkInstallAfterPermission = entry
+                runCatching { installPermissionLauncher.launch(apkInstallPermissionIntent(context)) }
+                    .onFailure { first ->
+                        runCatching { installPermissionLauncher.launch(Intent(Settings.ACTION_SECURITY_SETTINGS)) }
+                            .onFailure { second ->
+                                pendingApkInstallAfterPermission = null
+                                viewModel.emit("$apkSettingsFailed: ${second.message ?: first.message}")
+                            }
+                    }
+            }
+        )
+    }
     largePreviewEntry?.let { entry ->
         LargeFilePreviewDialog(
             entry = entry,
@@ -3315,7 +3365,26 @@ private suspend fun loadFiles(viewModel: AppViewModel, path: String, setLoading:
     setLoading(false)
 }
 
-private data class PreviewDownloadState(val entry: FileEntry, val bytesRead: Long, val totalBytes: Long)
+private data class PreviewDownloadState(val entry: FileEntry, val bytesRead: Long, val totalBytes: Long, val installApk: Boolean = false)
+
+@Composable
+private fun ApkInstallPermissionDialog(entry: FileEntry, onDismiss: () -> Unit, onOpenSettings: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { Button(onClick = onOpenSettings) { Text(localized("去授权", "Open settings")) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } },
+        icon = { Icon(Icons.Rounded.Android, contentDescription = null) },
+        title = { Text(localized("允许安装 APK", "Allow APK install")) },
+        text = {
+            Text(
+                localized(
+                    "安装 ${entry.name} 前，需要先允许本应用安装未知来源应用。授权后会继续下载并打开系统安装程序。",
+                    "Before installing ${entry.name}, allow this app to install unknown apps. After permission is granted, the APK will be downloaded and opened with the system installer."
+                )
+            )
+        }
+    )
+}
 
 @Composable
 private fun LargeFilePreviewDialog(entry: FileEntry, onDismiss: () -> Unit, onConfirm: () -> Unit) {
@@ -3336,7 +3405,7 @@ private fun PreviewDownloadDialog(progress: PreviewDownloadState, onCancel: () -
         onDismissRequest = {},
         confirmButton = {},
         dismissButton = { TextButton(onClick = onCancel) { Text(localized("取消下载", "Cancel")) } },
-        title = { Text(localized("正在准备预览", "Preparing preview")) },
+        title = { Text(if (progress.installApk) localized("正在准备安装", "Preparing install") else localized("正在准备预览", "Preparing preview")) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(progress.entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -3357,6 +3426,7 @@ private fun Context.openCachedPreview(file: CachedPreviewFile, titlePrefix: Stri
     val intent = Intent(Intent.ACTION_VIEW)
         .setDataAndType(uri, mimeType)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        .also { it.clipData = ClipData.newUri(contentResolver, file.name, uri) }
     runCatching { startActivity(Intent.createChooser(intent, "$titlePrefix ${file.name}")) }
         .onFailure { e ->
             val message = if (e is ActivityNotFoundException) noAppMessage else (e.message ?: fallbackError)
@@ -3364,11 +3434,34 @@ private fun Context.openCachedPreview(file: CachedPreviewFile, titlePrefix: Stri
         }
 }
 
+private fun Context.installCachedApk(file: CachedPreviewFile, noInstallerMessage: String, fallbackError: String, onError: (String) -> Unit) {
+    val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file.file)
+    val intent = Intent(Intent.ACTION_VIEW)
+        .setDataAndType(uri, APK_MIME_TYPE)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        .also { it.clipData = ClipData.newUri(contentResolver, file.name, uri) }
+    runCatching { startActivity(intent) }
+        .onFailure { e ->
+            val message = if (e is ActivityNotFoundException) noInstallerMessage else (e.message ?: fallbackError)
+            onError(message)
+        }
+}
+
+private fun Context.canInstallUnknownApks(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls()
+
+private fun apkInstallPermissionIntent(context: Context): Intent = Intent(
+    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+    Uri.parse("package:${context.packageName}")
+)
+
+private fun isApkFile(entry: FileEntry): Boolean = entry.type == "file" && fileNameFromPath(entry.name.ifBlank { entry.path }).lowercase().endsWith(".apk")
+
 private fun previewMimeType(name: String, serverMimeType: String): String {
     val clean = serverMimeType.substringBefore(';').trim().lowercase()
     if (clean.isNotBlank() && clean != "application/octet-stream" && clean != "binary/octet-stream") return clean
     val ext = name.substringAfterLast('.', "").lowercase()
     return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: when (ext) {
+        "apk" -> APK_MIME_TYPE
         "md", "markdown" -> "text/markdown"
         "log", "txt", "csv", "json", "xml", "yaml", "yml", "kt", "java", "js", "ts", "py", "sh" -> "text/plain"
         else -> "application/octet-stream"
