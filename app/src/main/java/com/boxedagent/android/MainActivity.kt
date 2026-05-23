@@ -5,9 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalDensity
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.unit.Density
 import com.boxedagent.android.ui.AppThemeMode
 import com.boxedagent.android.ui.AppViewModel
@@ -22,8 +22,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 1.0f)) {
-                val state by viewModel.state.collectAsState()
-                val dark = when (state.themeMode) {
+                val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
+                val dark = when (themeMode) {
                     AppThemeMode.Light -> false
                     AppThemeMode.Dark -> true
                 }

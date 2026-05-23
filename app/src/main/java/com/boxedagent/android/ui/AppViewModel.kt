@@ -10,7 +10,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -108,6 +112,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         languageMode = prefs.getString("languageMode", AppLanguageMode.System.name)?.let { runCatching { AppLanguageMode.valueOf(it) }.getOrNull() } ?: AppLanguageMode.System
     ))
     val state: StateFlow<AppUiState> = _state
+    val themeMode: StateFlow<AppThemeMode> = _state
+        .map { it.themeMode }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, _state.value.themeMode)
 
     private var api = BoxedAgentApi(_state.value.baseUrl.ifBlank { DEFAULT_BASE_URL }, _state.value.token)
     private var globalWs: WebSocket? = null
@@ -119,6 +127,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val assistantDeltaFlushJobs = mutableMapOf<String, Job>()
     private val expandingMessageIds = mutableSetOf<String>()
     private var lastSyncedSelectedSessionId: String? = null
+    private var watchedBoxId: String? = null
+    private var watchedSessionId: String? = null
 
     init {
         initialActiveProfile?.let { profile ->
@@ -128,8 +138,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         globalWs?.close(1000, null)
-        boxWs?.close(1000, null)
-        sessionWs?.close(1000, null)
+        boxWs?.close(1000, null); watchedBoxId = null
+        sessionWs?.close(1000, null); watchedSessionId = null
         super.onCleared()
     }
 
@@ -192,8 +202,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         persistServerProfiles(next, nextActive)
         if (deletingActive && nextActive == null) {
             globalWs?.close(1000, null); globalWs = null
-            boxWs?.close(1000, null); boxWs = null
-            sessionWs?.close(1000, null); sessionWs = null
+            boxWs?.close(1000, null); boxWs = null; watchedBoxId = null
+            sessionWs?.close(1000, null); sessionWs = null; watchedSessionId = null
             pollingJob?.cancel(); pollingJob = null
             prefs.edit().remove("activeServerProfileId").remove("baseUrl").remove("token").apply()
             _state.update {
@@ -318,6 +328,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             prefs.edit().remove("token").apply()
             rememberActiveSessionId(null)
             globalWs?.close(1000, null); boxWs?.close(1000, null); sessionWs?.close(1000, null)
+            watchedBoxId = null; watchedSessionId = null
             pollingJob?.cancel()
             _state.update { old -> old.copy(token = "", authEnabled = old.authEnabled, authenticated = !old.authEnabled, boxes = emptyList(), sessions = emptyList(), activeBoxId = null, activeSessionId = null, messagesBySession = emptyMap()) }
         }
@@ -371,6 +382,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun startGlobalWs() {
         globalWs?.close(1000, null)
+        watchedBoxId = null
+        watchedSessionId = null
         globalWs = api.webSocket("/ws/events", object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val obj = runCatching { vmJson.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
@@ -409,8 +422,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun watchActiveBox() {
-        val boxId = _state.value.activeBoxId ?: run { boxWs?.close(1000, null); boxWs = null; return }
+        val boxId = _state.value.activeBoxId ?: run { boxWs?.close(1000, null); boxWs = null; watchedBoxId = null; return }
+        if (watchedBoxId == boxId && boxWs != null) return
         boxWs?.close(1000, null)
+        watchedBoxId = boxId
         boxWs = api.webSocket("/ws/boxes/$boxId/events", object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val obj = runCatching { vmJson.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
@@ -420,11 +435,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun watchActiveSession(loadMessages: Boolean) {
-        val sessionId = _state.value.activeSessionId ?: run { sessionWs?.close(1000, null); sessionWs = null; return }
-        sessionWs?.close(1000, null)
-        sessionWs = api.webSocket("/ws/sessions/$sessionId/events", object : WebSocketListener() {
-            override fun onMessage(webSocket: WebSocket, text: String) = handleSessionWs(sessionId, text)
-        })
+        val sessionId = _state.value.activeSessionId ?: run { sessionWs?.close(1000, null); sessionWs = null; watchedSessionId = null; return }
+        if (watchedSessionId != sessionId || sessionWs == null) {
+            sessionWs?.close(1000, null)
+            watchedSessionId = sessionId
+            sessionWs = api.webSocket("/ws/sessions/$sessionId/events", object : WebSocketListener() {
+                override fun onMessage(webSocket: WebSocket, text: String) = handleSessionWs(sessionId, text)
+            })
+        }
         if (loadMessages || !_state.value.messagesBySession.containsKey(sessionId)) loadSessionMessages(sessionId)
         refreshSessionRuntime(sessionId)
     }

@@ -73,6 +73,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.boxedagent.android.TerminalActivity
 import com.boxedagent.android.data.*
 import io.noties.prism4j.GrammarLocator
@@ -81,7 +82,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -236,7 +236,7 @@ private const val TOOL_CODE_COLLAPSED_CHARS = 12_000
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BoxedAgentApp(viewModel: AppViewModel) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val strings = stringsFor(state.languageMode)
     val snackbarHostState = remember { SnackbarHostState() }
 
