@@ -34,8 +34,11 @@ class TerminalActivity : Activity() {
     private var altActive = false
     private var textSizeSp = 14f
     private var firstResizeConnected = false
+    private var terminalMode: String = MODE_SHELL
     private var boxId: String = ""
     private var boxName: String = "Box"
+    private var sessionId: String = ""
+    private var sessionName: String = "Session"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -46,16 +49,19 @@ class TerminalActivity : Activity() {
         WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightNavigationBars = false
         window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
 
+        terminalMode = intent.getStringExtra(EXTRA_MODE) ?: MODE_SHELL
         boxId = intent.getStringExtra(EXTRA_BOX_ID).orEmpty()
         boxName = intent.getStringExtra(EXTRA_BOX_NAME) ?: "Box"
+        sessionId = intent.getStringExtra(EXTRA_SESSION_ID).orEmpty()
+        sessionName = intent.getStringExtra(EXTRA_SESSION_NAME) ?: "Session"
         val baseUrl = intent.getStringExtra(EXTRA_BASE_URL).orEmpty()
         val token = intent.getStringExtra(EXTRA_TOKEN).orEmpty()
         api = BoxedAgentApi(baseUrl, token)
 
         setContentView(buildContent())
-        if (boxId.isBlank()) {
-            setStatus("缺少 Box ID")
-            terminalView.appendRemoteText("Missing Box ID.\r\n")
+        if (!hasTarget()) {
+            setStatus(if (isTuiMode()) "缺少 Session ID" else "缺少 Box ID")
+            terminalView.appendRemoteText(if (isTuiMode()) "Missing Session ID.\r\n" else "Missing Box ID.\r\n")
         }
     }
 
@@ -106,7 +112,7 @@ class TerminalActivity : Activity() {
             onResize = { cols, rows ->
                 if (!firstResizeConnected) {
                     firstResizeConnected = true
-                    if (boxId.isNotBlank()) connect(cols, rows)
+                    if (hasTarget()) connect(cols, rows)
                 } else {
                     sendResize(cols, rows)
                 }
@@ -186,13 +192,14 @@ class TerminalActivity : Activity() {
     private fun connect(cols: Int, rows: Int) {
         webSocket?.close(1000, null)
         terminalView.clearScreen()
-        setStatus("连接 ${boxName}…")
-        webSocket = api.webSocket("/ws/boxes/$boxId/terminal?cols=${cols.coerceIn(20, 400)}&rows=${rows.coerceIn(8, 120)}", object : WebSocketListener() {
+        val title = terminalTitle()
+        setStatus("连接 $title…")
+        webSocket = api.webSocket(webSocketPath(cols, rows), object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 runOnUiThread {
                     val obj = runCatching { JSONObject(text) }.getOrNull()
                     when (obj?.optString("type")) {
-                        "ready" -> setStatus("${boxName} · ${obj.optInt("cols", cols)}×${obj.optInt("rows", rows)}")
+                        "ready" -> setStatus("${title} · ${obj.optInt("cols", cols)}×${obj.optInt("rows", rows)}")
                         "error" -> {
                             setStatus("终端错误")
                             terminalView.appendRemoteText("\r\n[terminal error] ${obj.optString("error")}\r\n")
@@ -225,6 +232,18 @@ class TerminalActivity : Activity() {
 
     private fun sendResize(cols: Int, rows: Int) {
         webSocket?.send("{\"type\":\"resize\",\"cols\":${cols.coerceIn(20, 400)},\"rows\":${rows.coerceIn(8, 120)}}")
+    }
+
+    private fun isTuiMode(): Boolean = terminalMode == MODE_TUI
+
+    private fun hasTarget(): Boolean = if (isTuiMode()) sessionId.isNotBlank() else boxId.isNotBlank()
+
+    private fun terminalTitle(): String = if (isTuiMode()) "TUI · $sessionName" else boxName
+
+    private fun webSocketPath(cols: Int, rows: Int): String {
+        val safeCols = cols.coerceIn(20, 400)
+        val safeRows = rows.coerceIn(8, if (isTuiMode()) 160 else 120)
+        return if (isTuiMode()) "/ws/sessions/$sessionId/tui?cols=$safeCols&rows=$safeRows" else "/ws/boxes/$boxId/terminal?cols=$safeCols&rows=$safeRows"
     }
 
     private fun changeTextSize(delta: Float) {
@@ -268,7 +287,12 @@ class TerminalActivity : Activity() {
     companion object {
         const val EXTRA_BASE_URL = "baseUrl"
         const val EXTRA_TOKEN = "token"
+        const val EXTRA_MODE = "mode"
         const val EXTRA_BOX_ID = "boxId"
         const val EXTRA_BOX_NAME = "boxName"
+        const val EXTRA_SESSION_ID = "sessionId"
+        const val EXTRA_SESSION_NAME = "sessionName"
+        const val MODE_SHELL = "shell"
+        const val MODE_TUI = "tui"
     }
 }

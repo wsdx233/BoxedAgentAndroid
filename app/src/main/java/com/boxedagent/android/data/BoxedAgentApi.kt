@@ -104,6 +104,10 @@ class BoxedAgentApi(
 
     suspend fun imageStatus(image: String): ImageStatusResponse = get("/api/images/status?image=${enc(image)}")
     suspend fun ensureImage(image: String): ImageStatusResponse = post("/api/images/ensure", ImageEnsureRequest(image))
+    suspend fun listImageProfiles(): ImageProfilesResponse = get("/api/image-profiles")
+    suspend fun getImageProfile(id: String): ImageProfileRecord = get("/api/image-profiles/${encPath(id)}")
+    suspend fun buildImageProfile(id: String): ImageProfileBuildResponse = post("/api/image-profiles/${encPath(id)}/build", UnitBody)
+    suspend fun ensureImageProfile(id: String): ImageProfileBuildResponse = post("/api/image-profiles/${encPath(id)}/ensure", UnitBody)
 
     suspend fun listBoxes(): List<BoxRecord> = get<BoxesResponse>("/api/boxes").boxes
     suspend fun createBox(body: CreateBoxRequest): BoxRecord = post("/api/boxes", body)
@@ -126,6 +130,7 @@ class BoxedAgentApi(
     suspend fun createSession(body: CreateSessionRequest): AgentSessionRecord = post("/api/sessions", body)
     suspend fun startSession(id: String): AgentSessionRecord = post("/api/sessions/${encPath(id)}/start", UnitBody)
     suspend fun stopSession(id: String): AgentSessionRecord = post("/api/sessions/${encPath(id)}/stop", UnitBody)
+    suspend fun reloadSession(id: String): ReloadSessionResponse = post("/api/sessions/${encPath(id)}/reload", UnitBody)
     suspend fun updateSession(id: String, body: PatchSessionRequest): AgentSessionRecord = patch("/api/sessions/${encPath(id)}", body)
     suspend fun deleteSession(id: String): OkResponse = delete("/api/sessions/${encPath(id)}")
     suspend fun abortSession(id: String): OkResponse = post("/api/sessions/${encPath(id)}/abort", UnitBody)
@@ -143,7 +148,9 @@ class BoxedAgentApi(
     suspend fun message(id: String, messageId: String): kotlinx.serialization.json.JsonElement? = get<SessionMessageResponse>("/api/sessions/${encPath(id)}/messages/${encPath(messageId)}").message
     suspend fun sessionState(id: String): SessionStateResponse = get("/api/sessions/${encPath(id)}/state")
     suspend fun sessionStats(id: String): SessionStats? = get<SessionStatsResponse>("/api/sessions/${encPath(id)}/stats").stats
+    suspend fun sessionResources(id: String): PiLoadedResources = get<PiLoadedResourcesResponse>("/api/sessions/${encPath(id)}/resources").resources
     suspend fun sessionModels(id: String): List<PiModel> = get<ModelsResponse>("/api/sessions/${encPath(id)}/models").models
+    suspend fun sessionCommands(id: String): List<PiSlashCommand> = get<PiSlashCommandsResponse>("/api/sessions/${encPath(id)}/commands").commands
     suspend fun setSessionModel(id: String, body: SetModelRequest): SetModelResponse = patch("/api/sessions/${encPath(id)}/model", body)
     suspend fun setSessionThinking(id: String, level: String): RuntimePatchResponse = patch("/api/sessions/${encPath(id)}/thinking", SetThinkingRequest(level))
     suspend fun setAutoCompaction(id: String, enabled: Boolean): RuntimePatchResponse = patch("/api/sessions/${encPath(id)}/auto-compaction", SetAutoCompactionRequest(enabled))
@@ -151,6 +158,8 @@ class BoxedAgentApi(
 
     suspend fun listFiles(boxId: String, path: String): List<FileEntry> = get<FilesResponse>("/api/boxes/${encPath(boxId)}/files?path=${enc(path)}").entries
     suspend fun mkdir(boxId: String, path: String): OkResponse = post("/api/boxes/${encPath(boxId)}/files/mkdir", MkdirRequest(path))
+    suspend fun copyFile(boxId: String, source: String, target: String): OkResponse = post("/api/boxes/${encPath(boxId)}/files/copy", FileOperationRequest(source, target))
+    suspend fun moveFile(boxId: String, source: String, target: String): OkResponse = post("/api/boxes/${encPath(boxId)}/files/move", FileOperationRequest(source, target))
     suspend fun deleteFile(boxId: String, path: String): OkResponse = delete("/api/boxes/${encPath(boxId)}/files?path=${enc(path)}")
     suspend fun uploadFile(boxId: String, path: String, fileName: String, bytes: ByteArray, mimeType: String? = null): UploadResponse = withContext(Dispatchers.IO) {
         val mediaType = (mimeType ?: "application/octet-stream").toMediaType()

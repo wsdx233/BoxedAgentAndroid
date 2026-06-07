@@ -55,11 +55,61 @@ data class PiBoxConfig(
 )
 
 @Serializable
+data class BoxPortMapping(
+    val id: String = "",
+    val name: String = "",
+    val port: Int = 0,
+    val protocol: String = "http",
+    val slug: String = "",
+    val openPath: String? = null,
+    val createdAt: String = "",
+    val updatedAt: String = ""
+)
+
+@Serializable
+data class ContainerGpuConfig(
+    val enabled: Boolean = false,
+    val count: JsonElement? = null,
+    val deviceIds: List<String> = emptyList()
+)
+
+@Serializable
+data class ContainerDeviceMapping(
+    val pathOnHost: String = "",
+    val pathInContainer: String? = null,
+    val cgroupPermissions: String? = null
+)
+
+@Serializable
+data class ContainerBindMount(
+    val source: String = "",
+    val target: String = "",
+    val readonly: Boolean? = null
+)
+
+@Serializable
+data class ContainerStartupConfig(
+    val workingDir: String? = null,
+    val user: String? = null,
+    val startupScript: String? = null,
+    val env: Map<String, String> = emptyMap(),
+    val extraHosts: List<String> = emptyList(),
+    val shmSizeMb: Int? = null,
+    val gpu: ContainerGpuConfig? = null,
+    val devices: List<ContainerDeviceMapping> = emptyList(),
+    val privileged: Boolean? = null,
+    val capAdd: List<String> = emptyList(),
+    val mounts: List<ContainerBindMount> = emptyList(),
+    val exposedPorts: List<Int> = emptyList()
+)
+
+@Serializable
 data class BoxRecord(
     val id: String = "",
     val name: String = "",
     val description: String? = null,
     val image: String = "",
+    val imageProfileId: String? = null,
     val workspacePath: String = "",
     val env: Map<String, String> = emptyMap(),
     val labels: Map<String, String> = emptyMap(),
@@ -67,7 +117,9 @@ data class BoxRecord(
     val cpus: Double? = null,
     val enableCodeServer: Boolean = false,
     val codeServerPassword: String? = null,
+    val portMappings: List<BoxPortMapping> = emptyList(),
     val pi: PiBoxConfig = PiBoxConfig(),
+    val startup: ContainerStartupConfig = ContainerStartupConfig(),
     val containerId: String? = null,
     val status: String = "stopped",
     val createdAt: String = "",
@@ -80,10 +132,70 @@ data class BoxRecord(
 data class BoxesResponse(val boxes: List<BoxRecord> = emptyList())
 
 @Serializable
+data class ImageBuildContextFile(
+    val path: String = "",
+    val content: String = "",
+    val mode: Int? = null
+)
+
+@Serializable
+data class ImageBuildConfig(
+    val buildArgs: Map<String, String> = emptyMap(),
+    val platform: String? = null,
+    val target: String? = null,
+    val noCache: Boolean? = null,
+    val pull: Boolean? = null,
+    val contextFiles: List<ImageBuildContextFile> = emptyList()
+)
+
+@Serializable
+data class ImageProfileBoxDefaults(
+    val env: Map<String, String> = emptyMap(),
+    val labels: Map<String, String> = emptyMap(),
+    val memoryMb: Int? = null,
+    val cpus: Double? = null,
+    val enableCodeServer: Boolean? = null,
+    val codeServerPassword: String? = null,
+    val pi: PiBoxConfig? = null,
+    val startup: ContainerStartupConfig? = null
+)
+
+@Serializable
+data class ImageProfileRecord(
+    val id: String = "",
+    val name: String = "",
+    val description: String? = null,
+    val image: String = "",
+    val baseImage: String? = null,
+    val dockerfile: String = "",
+    val build: ImageBuildConfig = ImageBuildConfig(),
+    val boxDefaults: ImageProfileBoxDefaults = ImageProfileBoxDefaults(),
+    val status: String = "draft",
+    val error: String? = null,
+    val lastBuiltAt: String? = null,
+    val createdAt: String = "",
+    val updatedAt: String = ""
+)
+
+@Serializable
+data class ImageProfilesResponse(
+    val profiles: List<ImageProfileRecord> = emptyList(),
+    val advancedOptionsAllowed: Boolean = true
+)
+
+@Serializable
+data class ImageProfileBuildResponse(
+    val profile: ImageProfileRecord = ImageProfileRecord(),
+    val image: ImageStatusResponse = ImageStatusResponse()
+)
+
+@Serializable
 data class CreateBoxRequest(
     val name: String,
     val description: String? = null,
     val image: String? = null,
+    val imageProfileId: String? = null,
+    val buildImage: Boolean = true,
     val env: Map<String, String>? = null,
     val labels: Map<String, String>? = null,
     val memoryMb: Int? = null,
@@ -91,6 +203,7 @@ data class CreateBoxRequest(
     val enableCodeServer: Boolean? = null,
     val codeServerPassword: String? = null,
     val pi: PiBoxConfig? = null,
+    val startup: ContainerStartupConfig? = null,
     val autostart: Boolean = true
 )
 
@@ -113,6 +226,7 @@ data class PatchBoxRequest(
     val name: String? = null,
     val description: String? = null,
     val image: String? = null,
+    val imageProfileId: String? = null,
     val env: Map<String, String>? = null,
     val labels: Map<String, String>? = null,
     val memoryMb: Int? = null,
@@ -120,6 +234,7 @@ data class PatchBoxRequest(
     val enableCodeServer: Boolean? = null,
     val codeServerPassword: String? = null,
     val pi: PiBoxConfig? = null,
+    val startup: ContainerStartupConfig? = null,
     val workspacePath: String? = null
 )
 
@@ -132,13 +247,17 @@ data class AgentSessionRecord(
     val createdAt: String = "",
     val updatedAt: String = "",
     val lastActiveAt: String? = null,
+    val kind: String = "chat",
     val cwd: String? = null,
     val model: String? = null,
     val provider: String? = null,
     val thinkingLevel: String? = null,
     val autoCompactionEnabled: Boolean? = null,
     val sessionFile: String? = null,
-    val error: String? = null
+    val piSessionId: String? = null,
+    val launchArgs: List<String> = emptyList(),
+    val error: String? = null,
+    val loadedResources: PiLoadedResources? = null
 )
 
 @Serializable
@@ -152,6 +271,9 @@ data class CreateSessionRequest(
     val provider: String? = null,
     val model: String? = null,
     val thinkingLevel: String? = null,
+    val kind: String = "chat",
+    val launchArgs: List<String>? = null,
+    val launchArgsText: String? = null,
     val autostart: Boolean = false
 )
 
@@ -255,6 +377,50 @@ fun PiModel.providerNameOrNull(): String? = (provider ?: providerId ?: providerN
 data class ModelsResponse(val models: List<PiModel> = emptyList())
 
 @Serializable
+data class PiSlashCommand(
+    val name: String = "",
+    val description: String? = null,
+    val source: String = "extension",
+    val sourceInfo: JsonObject? = null
+)
+
+@Serializable
+data class PiSlashCommandsResponse(val commands: List<PiSlashCommand> = emptyList())
+
+@Serializable
+data class PiLoadedResourceItem(
+    val name: String = "",
+    val path: String = "",
+    val scope: String = "workspace",
+    val kind: String = "context",
+    val type: String? = null,
+    val source: String? = null,
+    val description: String? = null,
+    val entrypoint: String? = null,
+    val size: Long? = null
+)
+
+@Serializable
+data class PiLoadedResources(
+    val cwd: String = "/workspace",
+    val reason: String? = null,
+    val generatedAt: String = "",
+    val contextFiles: List<PiLoadedResourceItem> = emptyList(),
+    val packages: List<PiLoadedResourceItem> = emptyList(),
+    val extensions: List<PiLoadedResourceItem> = emptyList(),
+    val skills: List<PiLoadedResourceItem> = emptyList(),
+    val prompts: List<PiLoadedResourceItem> = emptyList(),
+    val themes: List<PiLoadedResourceItem> = emptyList(),
+    val diagnostics: List<String> = emptyList()
+)
+
+@Serializable
+data class PiLoadedResourcesResponse(val resources: PiLoadedResources = PiLoadedResources())
+
+@Serializable
+data class ReloadSessionResponse(val session: AgentSessionRecord = AgentSessionRecord())
+
+@Serializable
 data class FileEntry(
     val name: String = "",
     val path: String = "",
@@ -268,6 +434,9 @@ data class FilesResponse(val entries: List<FileEntry> = emptyList())
 
 @Serializable
 data class MkdirRequest(val path: String)
+
+@Serializable
+data class FileOperationRequest(val source: String, val target: String)
 
 @Serializable
 data class UploadResponse(val ok: Boolean = false, val filename: String? = null)
@@ -327,7 +496,8 @@ data class SessionStats(
     val totalMessages: Int? = null,
     val tokens: TokenStats? = null,
     val cost: Double? = null,
-    val contextUsage: ContextUsage? = null
+    val contextUsage: ContextUsage? = null,
+    val loadedResources: PiLoadedResources? = null
 )
 
 @Serializable

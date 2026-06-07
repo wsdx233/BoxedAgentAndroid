@@ -26,6 +26,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Response
@@ -56,6 +57,7 @@ data class ServerProfile(
 
 data class UiEvent(val id: Long = System.nanoTime(), val message: String)
 data class ComposerInsert(val id: Long = System.nanoTime(), val sessionId: String?, val text: String, val replace: Boolean = false)
+data class TuiTerminalLaunch(val id: Long = System.nanoTime(), val sessionId: String, val sessionName: String)
 
 data class AppUiState(
     val baseUrl: String = "",
@@ -67,6 +69,8 @@ data class AppUiState(
     val health: String = "—",
     val activity: String = "",
     val boxes: List<BoxRecord> = emptyList(),
+    val imageProfiles: List<ImageProfileRecord> = emptyList(),
+    val imageProfilesAdvancedAllowed: Boolean = true,
     val sessions: List<AgentSessionRecord> = emptyList(),
     val activeBoxId: String? = null,
     val activeSessionId: String? = null,
@@ -77,6 +81,8 @@ data class AppUiState(
     val turnActiveBySession: Map<String, Boolean> = emptyMap(),
     val queueBySession: Map<String, QueueState> = emptyMap(),
     val statsBySession: Map<String, SessionStats?> = emptyMap(),
+    val resourcesBySession: Map<String, PiLoadedResources> = emptyMap(),
+    val sessionCommandsBySession: Map<String, List<PiSlashCommand>> = emptyMap(),
     val sessionModels: List<PiModel> = emptyList(),
     val modelLoading: Boolean = false,
     val serverProfiles: List<ServerProfile> = emptyList(),
@@ -84,7 +90,8 @@ data class AppUiState(
     val themeMode: AppThemeMode = AppThemeMode.Light,
     val languageMode: AppLanguageMode = AppLanguageMode.System,
     val event: UiEvent? = null,
-    val composerInsert: ComposerInsert? = null
+    val composerInsert: ComposerInsert? = null,
+    val tuiTerminalLaunch: TuiTerminalLaunch? = null
 ) {
     val activeBox: BoxRecord? get() = boxes.firstOrNull { it.id == activeBoxId }
     val activeSession: AgentSessionRecord? get() = sessions.firstOrNull { it.id == activeSessionId }
@@ -92,6 +99,8 @@ data class AppUiState(
     val activeTurn: Boolean get() = activeSessionId?.let { turnActiveBySession[it] } == true
     val activeQueue: QueueState get() = activeSessionId?.let { queueBySession[it] } ?: QueueState()
     val activeStats: SessionStats? get() = activeSessionId?.let { statsBySession[it] }
+    val activeResources: PiLoadedResources? get() = activeSessionId?.let { resourcesBySession[it] } ?: activeSession?.loadedResources ?: activeStats?.loadedResources
+    val activeCommands: List<PiSlashCommand> get() = activeSessionId?.let { sessionCommandsBySession[it] }.orEmpty()
 }
 
 data class QueueState(val steering: List<String> = emptyList(), val followUp: List<String> = emptyList())
@@ -176,13 +185,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 baseUrl = profile.baseUrl,
                 token = profile.token,
                 boxes = emptyList(),
+                imageProfiles = emptyList(),
                 sessions = emptyList(),
                 activeBoxId = null,
                 activeSessionId = rememberedSessionId,
                 messagesBySession = emptyMap(),
                 turnActiveBySession = emptyMap(),
                 queueBySession = emptyMap(),
-                statsBySession = emptyMap()
+                statsBySession = emptyMap(),
+                resourcesBySession = emptyMap(),
+                sessionCommandsBySession = emptyMap()
             )
         }
         prefs.edit().putString("activeServerProfileId", id).putString("baseUrl", profile.baseUrl).putString("token", profile.token).apply()
@@ -219,6 +231,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     health = "—",
                     activity = "",
                     boxes = emptyList(),
+                    imageProfiles = emptyList(),
                     sessions = emptyList(),
                     activeBoxId = null,
                     activeSessionId = null,
@@ -226,6 +239,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     turnActiveBySession = emptyMap(),
                     queueBySession = emptyMap(),
                     statsBySession = emptyMap(),
+                    resourcesBySession = emptyMap(),
+                    sessionCommandsBySession = emptyMap(),
                     sessionModels = emptyList(),
                     modelLoading = false
                 )
@@ -276,6 +291,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun insertIntoComposer(text: String, returnToChat: Boolean = true) = _state.update { it.copy(composerInsert = ComposerInsert(sessionId = it.activeSessionId, text = text), selectedPanel = if (returnToChat) MainPanel.Chat else it.selectedPanel) }
     fun setComposerDraft(sessionId: String?, text: String, returnToChat: Boolean = true) = _state.update { it.copy(composerInsert = ComposerInsert(sessionId = sessionId ?: it.activeSessionId, text = text, replace = true), selectedPanel = if (returnToChat) MainPanel.Chat else it.selectedPanel) }
     fun clearComposerInsert(id: Long) = _state.update { if (it.composerInsert?.id == id) it.copy(composerInsert = null) else it }
+    fun clearTuiTerminalLaunch(id: Long) = _state.update { if (it.tuiTerminalLaunch?.id == id) it.copy(tuiTerminalLaunch = null) else it }
 
     fun connectFromState() {
         val s = _state.value
@@ -330,7 +346,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             globalWs?.close(1000, null); boxWs?.close(1000, null); sessionWs?.close(1000, null)
             watchedBoxId = null; watchedSessionId = null
             pollingJob?.cancel()
-            _state.update { old -> old.copy(token = "", authEnabled = old.authEnabled, authenticated = !old.authEnabled, boxes = emptyList(), sessions = emptyList(), activeBoxId = null, activeSessionId = null, messagesBySession = emptyMap()) }
+            _state.update { old -> old.copy(token = "", authEnabled = old.authEnabled, authenticated = !old.authEnabled, boxes = emptyList(), imageProfiles = emptyList(), sessions = emptyList(), activeBoxId = null, activeSessionId = null, messagesBySession = emptyMap(), resourcesBySession = emptyMap(), sessionCommandsBySession = emptyMap()) }
         }
     }
 
@@ -339,6 +355,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun refreshAll() {
         try {
             val health = runCatching { api.health() }.getOrNull()
+            val imageProfilesResponse = runCatching { api.listImageProfiles() }.getOrNull()
             val boxes = api.listBoxes()
             val sessions = api.listSessions()
             var nextActiveSessionId: String? = null
@@ -355,6 +372,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 old.copy(
                     health = health?.docker ?: old.health,
                     boxes = boxes,
+                    imageProfiles = imageProfilesResponse?.profiles ?: old.imageProfiles,
+                    imageProfilesAdvancedAllowed = imageProfilesResponse?.advancedOptionsAllowed ?: old.imageProfilesAdvancedAllowed,
                     sessions = sessions,
                     activeBoxId = activeBoxId,
                     activeSessionId = activeSessionId,
@@ -388,7 +407,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 val obj = runCatching { vmJson.parseToJsonElement(text).jsonObject }.getOrNull() ?: return
                 when (obj.string("type")) {
-                    "boxes_changed" -> viewModelScope.launch { refreshAll() }
+                    "boxes_changed", "image_profiles_changed" -> viewModelScope.launch { refreshAll() }
                     "image_ensure_start" -> _state.update { it.copy(activity = "${if (obj.string("action") == "build") "构建" else "拉取"}镜像：${obj.string("image") ?: ""}") }
                     "image_progress" -> obj.string("message")?.let { msg -> _state.update { it.copy(activity = msg.take(160)) } }
                     "image_ensure_end" -> {
@@ -436,6 +455,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun watchActiveSession(loadMessages: Boolean) {
         val sessionId = _state.value.activeSessionId ?: run { sessionWs?.close(1000, null); sessionWs = null; watchedSessionId = null; return }
+        val session = _state.value.sessions.firstOrNull { it.id == sessionId }
         if (watchedSessionId != sessionId || sessionWs == null) {
             sessionWs?.close(1000, null)
             watchedSessionId = sessionId
@@ -443,12 +463,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 override fun onMessage(webSocket: WebSocket, text: String) = handleSessionWs(sessionId, text)
             })
         }
-        if (loadMessages || !_state.value.messagesBySession.containsKey(sessionId)) loadSessionMessages(sessionId)
+        if (session?.kind != "tui" && (loadMessages || !_state.value.messagesBySession.containsKey(sessionId))) loadSessionMessages(sessionId)
+        if (session?.kind == "tui") _state.update { old -> old.copy(messagesBySession = old.messagesBySession + (sessionId to emptyList())) }
         refreshSessionRuntime(sessionId)
     }
 
     fun loadSessionMessages(sessionId: String? = null) {
         val id = sessionId ?: _state.value.activeSessionId ?: return
+        if (_state.value.sessions.firstOrNull { it.id == id }?.kind == "tui") return
         viewModelScope.launch {
             _state.update { it.copy(messagesLoading = true) }
             try {
@@ -486,8 +508,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshSessionRuntime(sessionId: String? = null) {
         val id = sessionId ?: _state.value.activeSessionId ?: return
+        val isTui = _state.value.sessions.firstOrNull { it.id == id }?.kind == "tui"
         viewModelScope.launch {
-            runCatching { api.sessionStats(id) }.onSuccess { stats -> _state.update { it.copy(statsBySession = it.statsBySession + (id to stats)) } }
+            if (!isTui) {
+                runCatching { api.sessionStats(id) }.onSuccess { stats ->
+                    _state.update { old -> old.copy(statsBySession = old.statsBySession + (id to stats), resourcesBySession = stats?.loadedResources?.let { old.resourcesBySession + (id to it) } ?: old.resourcesBySession) }
+                }
+                runCatching { api.sessionResources(id) }.onSuccess { resources ->
+                    _state.update { old -> old.copy(resourcesBySession = old.resourcesBySession + (id to resources)) }
+                    patchSessionLocal(id, resources = resources, cwd = resources.cwd)
+                }
+            }
             runCatching { api.sessionState(id) }.onSuccess { applyRuntimeState(id, it.state) }
         }
     }
@@ -499,6 +530,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val status = msg.string("status") ?: return
                 setTurnActive(sessionId, status == "working")
                 patchSessionLocal(sessionId, status = if (status == "starting" && _state.value.turnActiveBySession[sessionId] == true) "working" else status, error = msg.string("error"))
+            }
+            "loaded_resources" -> msg["resources"]?.let { resourcesElement ->
+                runCatching { vmJson.decodeFromJsonElement(PiLoadedResources.serializer(), resourcesElement) }
+                    .onSuccess { resources ->
+                        _state.update { old -> old.copy(resourcesBySession = old.resourcesBySession + (sessionId to resources)) }
+                        patchSessionLocal(sessionId, resources = resources, cwd = resources.cwd)
+                    }
             }
             "agent_event" -> handleAgentEvent(sessionId, msg.obj("event") ?: return)
         }
@@ -547,10 +585,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         patchSessionLocal(sessionId, status = if (active) "working" else null, error = null)
     }
 
-    private fun patchSessionLocal(sessionId: String, status: String? = null, error: String? = null, patch: AgentSessionRecord? = null) {
+    private fun patchSessionLocal(sessionId: String, status: String? = null, error: String? = null, patch: AgentSessionRecord? = null, resources: PiLoadedResources? = null, cwd: String? = null) {
         _state.update { old ->
             old.copy(sessions = old.sessions.map { s ->
-                if (s.id != sessionId) s else patch ?: s.copy(status = status ?: s.status, error = error ?: s.error)
+                if (s.id != sessionId) s else patch ?: s.copy(status = status ?: s.status, error = error ?: s.error, loadedResources = resources ?: s.loadedResources, cwd = cwd ?: s.cwd)
             })
         }
     }
@@ -636,10 +674,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun createBox(name: String, image: String, description: String, password: String, provider: String, model: String, thinking: String) = viewModelScope.launch {
+    fun createBox(name: String, image: String, description: String, password: String, provider: String, model: String, thinking: String, imageProfileId: String? = null, buildImage: Boolean = true) = viewModelScope.launch {
         try {
             _state.update { it.copy(activity = "创建 Box：检查/构建 Docker 镜像…") }
-            val box = api.createBox(CreateBoxRequest(name = name, description = description.ifBlank { null }, image = image, enableCodeServer = true, codeServerPassword = password, autostart = true, pi = PiBoxConfig(defaultProvider = provider.ifBlank { null }, defaultModel = model.ifBlank { null }, defaultThinkingLevel = thinking)))
+            val box = api.createBox(CreateBoxRequest(name = name, description = description.ifBlank { null }, image = image.takeIf { it.isNotBlank() }, imageProfileId = imageProfileId?.takeIf { it.isNotBlank() }, buildImage = buildImage, enableCodeServer = true, codeServerPassword = password, autostart = true, pi = PiBoxConfig(defaultProvider = provider.ifBlank { null }, defaultModel = model.ifBlank { null }, defaultThinkingLevel = thinking)))
             api.createSession(CreateSessionRequest(boxId = box.id, name = "默认会话", provider = provider.ifBlank { null }, model = model.ifBlank { null }, thinkingLevel = thinking, autostart = false))
             refreshAll()
             selectBox(box.id)
@@ -655,17 +693,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun duplicateBox(id: String, name: String) = viewModelScope.launch { runApi("复刻 Box 配置") { val box = api.duplicateBox(id, DuplicateBoxRequest(name = name)); refreshAll(); selectBox(box.id) } }
     fun cloneBox(id: String, name: String) = viewModelScope.launch { runApi("克隆 Box") { val box = api.cloneBox(id, CloneBoxRequest(name = name)); refreshAll(); selectBox(box.id) } }
 
-    fun createSession(name: String, cwd: String, provider: String?, model: String?, thinking: String?, autostart: Boolean = true) = viewModelScope.launch {
+    fun createSession(name: String, cwd: String, provider: String?, model: String?, thinking: String?, autostart: Boolean = true, kind: String = "chat", launchArgsText: String? = null) = viewModelScope.launch {
         val boxId = _state.value.activeBoxId ?: return@launch emit("请先选择 Box")
         runApi("创建 Session") {
-            val s = api.createSession(CreateSessionRequest(boxId, name.ifBlank { null }, normalizeCwd(cwd), provider?.ifBlank { null }, model?.ifBlank { null }, thinking?.ifBlank { null }, autostart))
+            val sessionKind = if (kind == "tui") "tui" else "chat"
+            val s = api.createSession(CreateSessionRequest(boxId = boxId, name = name.ifBlank { null }, cwd = normalizeCwd(cwd), provider = provider?.ifBlank { null }, model = model?.ifBlank { null }, thinkingLevel = thinking?.ifBlank { null }, kind = sessionKind, launchArgsText = launchArgsText?.takeIf { it.isNotBlank() }, autostart = autostart))
             refreshAll(); selectSession(s.id)
+            if (sessionKind == "tui") _state.update { it.copy(selectedPanel = MainPanel.Chat, tuiTerminalLaunch = TuiTerminalLaunch(sessionId = s.id, sessionName = s.name)) }
         }
     }
 
     fun renameSession(id: String, name: String) = viewModelScope.launch { runApi("重命名 Session") { api.updateSession(id, PatchSessionRequest(name = name)); refreshAll() } }
     fun startSession(id: String) = viewModelScope.launch { runApi("启动 Session") { api.startSession(id); refreshAll(); selectSession(id) } }
     fun stopSession(id: String) = viewModelScope.launch { runApi("停止 Session") { api.stopSession(id); refreshAll() } }
+    fun reloadSession(id: String) = viewModelScope.launch { runApi("Reload Session") { val res = api.reloadSession(id); patchSessionLocal(id, patch = res.session); refreshAll() } }
     fun deleteSession(id: String) = viewModelScope.launch { runApi("删除 Session") { api.deleteSession(id); refreshAll() } }
     fun duplicateSession(id: String, name: String? = null) = viewModelScope.launch { runApi("复刻 Session") { val res = api.duplicateSession(id, DuplicateSessionRequest(name = name?.trim()?.takeIf { it.isNotBlank() })); refreshAll(); selectSession(res.session.id) } }
     fun cloneSession(id: String, name: String? = null) = viewModelScope.launch {
@@ -694,6 +735,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun loadForkMessages(sessionId: String): List<ForkMessage> = api.forkMessages(sessionId)
     suspend fun loadSessionTree(sessionId: String): SessionTree = api.sessionTree(sessionId)
     suspend fun loadBoxModels(boxId: String): List<PiModel> = api.boxModels(boxId)
+    suspend fun loadImageProfiles(): List<ImageProfileRecord> = api.listImageProfiles().profiles
+    suspend fun loadSessionCommands(sessionId: String): List<PiSlashCommand> = api.sessionCommands(sessionId).also { commands -> _state.update { old -> old.copy(sessionCommandsBySession = old.sessionCommandsBySession + (sessionId to commands)) } }
 
     fun sendPrompt(text: String, attachments: List<DraftAttachment>, sendMode: String?) = viewModelScope.launch {
         val s = _state.value
@@ -788,6 +831,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun deleteFile(path: String) {
         val boxId = _state.value.activeBoxId ?: throw ApiException("请先选择 Box")
         api.deleteFile(boxId, path)
+    }
+
+    suspend fun copyFile(source: String, target: String) {
+        val boxId = _state.value.activeBoxId ?: throw ApiException("请先选择 Box")
+        api.copyFile(boxId, source, target)
+    }
+
+    suspend fun moveFile(source: String, target: String) {
+        val boxId = _state.value.activeBoxId ?: throw ApiException("请先选择 Box")
+        api.moveFile(boxId, source, target)
     }
 
     suspend fun uploadFile(path: String, file: DraftAttachment) {

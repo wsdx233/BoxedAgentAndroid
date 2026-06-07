@@ -239,6 +239,19 @@ fun BoxedAgentApp(viewModel: AppViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val strings = stringsFor(state.languageMode)
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+
+    LaunchedEffect(state.tuiTerminalLaunch?.id) {
+        val launch = state.tuiTerminalLaunch ?: return@LaunchedEffect
+        context.startActivity(Intent(context, TerminalActivity::class.java).apply {
+            putExtra(TerminalActivity.EXTRA_BASE_URL, viewModel.baseUrl())
+            putExtra(TerminalActivity.EXTRA_TOKEN, viewModel.bearerToken())
+            putExtra(TerminalActivity.EXTRA_MODE, TerminalActivity.MODE_TUI)
+            putExtra(TerminalActivity.EXTRA_SESSION_ID, launch.sessionId)
+            putExtra(TerminalActivity.EXTRA_SESSION_NAME, launch.sessionName)
+        })
+        viewModel.clearTuiTerminalLaunch(launch.id)
+    }
 
     LaunchedEffect(state.event?.id) {
         val event = state.event ?: return@LaunchedEffect
@@ -527,6 +540,16 @@ private fun ServerProfileDialog(strings: AppStrings, initial: ServerProfile?, on
 
 @Composable
 private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
+    val context = LocalContext.current
+    fun openTuiSession(session: AgentSessionRecord) {
+        context.startActivity(Intent(context, TerminalActivity::class.java).apply {
+            putExtra(TerminalActivity.EXTRA_BASE_URL, viewModel.baseUrl())
+            putExtra(TerminalActivity.EXTRA_TOKEN, viewModel.bearerToken())
+            putExtra(TerminalActivity.EXTRA_MODE, TerminalActivity.MODE_TUI)
+            putExtra(TerminalActivity.EXTRA_SESSION_ID, session.id)
+            putExtra(TerminalActivity.EXTRA_SESSION_NAME, session.name)
+        })
+    }
     var createBox by remember { mutableStateOf(false) }
     var createSession by remember { mutableStateOf(false) }
     var renameBox by remember { mutableStateOf<BoxRecord?>(null) }
@@ -571,20 +594,23 @@ private fun BoxesScreen(state: AppUiState, viewModel: AppViewModel) {
             SessionCard(
                 session = session,
                 active = session.id == state.activeSessionId,
-                onSelect = { viewModel.selectSession(session.id); viewModel.setPanel(MainPanel.Chat) },
+                onSelect = {
+                    viewModel.selectSession(session.id)
+                    if (session.kind == "tui") openTuiSession(session) else viewModel.setPanel(MainPanel.Chat)
+                },
                 onStartStop = { if (session.status == "running" || session.status == "working") viewModel.stopSession(session.id) else viewModel.startSession(session.id) },
                 onRename = { renameSession = session },
                 onTree = { treeSession = session },
-                onClone = { viewModel.cloneSession(session.id, nextReplicatedName(session.name, "session", "-clone")) },
+                onClone = { if (session.kind != "tui") viewModel.cloneSession(session.id, nextReplicatedName(session.name, "session", "-clone")) },
                 onDuplicate = { viewModel.duplicateSession(session.id, nextReplicatedName(session.name, "session", "-copy")) },
-                onFork = { forkSession = session },
+                onFork = { if (session.kind != "tui") forkSession = session },
                 onDelete = { deleteSession = session }
             )
         }
     }
 
-    if (createBox) CreateBoxDialog(onDismiss = { createBox = false }, onCreate = { name, image, desc, password, provider, model, thinking ->
-        createBox = false; viewModel.createBox(name, image, desc, password, provider, model, thinking)
+    if (createBox) CreateBoxDialog(profiles = state.imageProfiles, onDismiss = { createBox = false }, onCreate = { name, image, desc, password, provider, model, thinking, imageProfileId, buildImage ->
+        createBox = false; viewModel.createBox(name, image, desc, password, provider, model, thinking, imageProfileId, buildImage)
     })
     state.activeBox?.let { activeBox -> if (createSession) CreateSessionDialog(activeBox, viewModel, onDismiss = { createSession = false }) }
     renameBox?.let { box -> InputDialog(localized("重命名 Box", "Rename box"), box.name, onDismiss = { renameBox = null }, onConfirm = { viewModel.renameBox(box.id, it); renameBox = null }) }
@@ -636,17 +662,18 @@ private fun SessionCard(session: AgentSessionRecord, active: Boolean, onSelect: 
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(session.name, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    if (session.kind == "tui") AssistChip(onClick = {}, label = { Text("TUI", fontSize = 11.sp) }, leadingIcon = { Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.size(14.dp)) }, modifier = Modifier.height(28.dp))
                     StatusDot(session.status)
                 }
-                Text(listOf(session.provider, session.model, session.thinkingLevel, session.cwd ?: "/workspace").filterNotNull().joinToString(" · "), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (session.kind == "tui") listOf("pi TUI", session.cwd ?: "/workspace").joinToString(" · ") else listOf(session.provider, session.model, session.thinkingLevel, session.cwd ?: "/workspace").filterNotNull().joinToString(" · "), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 session.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             }
             Box { IconButton(onClick = { menu = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Rounded.MoreVert, contentDescription = localized("操作", "Actions")) }; DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text(if (session.status == "running" || session.status == "working") localized("停止", "Stop") else localized("启动", "Start")) }, onClick = { menu = false; onStartStop() })
                 DropdownMenuItem(text = { Text(localized("重命名", "Rename")) }, onClick = { menu = false; onRename() })
-                DropdownMenuItem(text = { Text("Tree") }, onClick = { menu = false; onTree() })
-                DropdownMenuItem(text = { Text("Fork") }, onClick = { menu = false; onFork() })
-                DropdownMenuItem(text = { Text("Clone") }, onClick = { menu = false; onClone() })
+                if (session.kind != "tui") DropdownMenuItem(text = { Text("Tree") }, onClick = { menu = false; onTree() })
+                if (session.kind != "tui") DropdownMenuItem(text = { Text("Fork") }, onClick = { menu = false; onFork() })
+                if (session.kind != "tui") DropdownMenuItem(text = { Text("Clone") }, onClick = { menu = false; onClone() })
                 DropdownMenuItem(text = { Text(localized("复刻空配置", "Duplicate config")) }, onClick = { menu = false; onDuplicate() })
                 DropdownMenuItem(text = { Text(localized("删除", "Delete")) }, onClick = { menu = false; onDelete() })
             } }
@@ -688,19 +715,38 @@ private fun EmptyCard(title: String, subtitle: String) {
     OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { Text(title, fontWeight = FontWeight.Bold); Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun CreateBoxDialog(onDismiss: () -> Unit, onCreate: (String, String, String, String, String, String, String) -> Unit) {
+private fun CreateBoxDialog(profiles: List<ImageProfileRecord>, onDismiss: () -> Unit, onCreate: (String, String, String, String, String, String, String, String?, Boolean) -> Unit) {
     var name by remember { mutableStateOf("box-${(100..999).random()}") }
     var image by remember { mutableStateOf("boxedagent/ubuntu-dev:24.04") }
+    var selectedProfileId by remember(profiles) { mutableStateOf(profiles.firstOrNull()?.id) }
+    var buildImage by remember { mutableStateOf(true) }
     var password by remember { mutableStateOf("boxedagent") }
     var provider by remember { mutableStateOf("") }
     var model by remember { mutableStateOf("") }
     var thinking by remember { mutableStateOf("medium") }
     var desc by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(enabled = name.isNotBlank() && image.isNotBlank(), onClick = { onCreate(name, image, desc, password, provider, model, thinking) }) { Text(localized("创建", "Create")) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } }, title = { Text(localized("创建 Box", "Create box")) }, text = {
+    val selectedProfile = profiles.firstOrNull { it.id == selectedProfileId }
+    val canCreate = name.isNotBlank() && (selectedProfile != null || image.isNotBlank())
+    AlertDialog(onDismissRequest = onDismiss, confirmButton = { Button(enabled = canCreate, onClick = { onCreate(name, if (selectedProfile == null) image else "", desc, password, provider, model, thinking, selectedProfile?.id, buildImage) }) { Text(localized("创建", "Create")) } }, dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } }, title = { Text(localized("创建 Box", "Create box")) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(name, { name = it }, label = { Text(localized("名称", "Name")) }, singleLine = true)
-            OutlinedTextField(image, { image = it }, label = { Text(localized("Docker 镜像", "Docker image")) }, singleLine = true)
+            if (profiles.isNotEmpty()) {
+                Text(localized("镜像模板", "Image profile"), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    FilterChip(selected = selectedProfileId == null, onClick = { selectedProfileId = null }, label = { Text(localized("手动镜像", "Manual image")) })
+                    profiles.take(12).forEach { profile ->
+                        FilterChip(selected = selectedProfileId == profile.id, onClick = { selectedProfileId = profile.id; image = profile.image }, label = { Text(profile.name.take(24), maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                    }
+                }
+                selectedProfile?.let { profile -> Text(listOf(profile.image, profile.status, profile.description.orEmpty()).filter { it.isNotBlank() }.joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Switch(checked = buildImage, onCheckedChange = { buildImage = it })
+                    Text(localized("创建前确保/构建镜像", "Ensure/build image before create"), fontSize = 13.sp)
+                }
+            }
+            if (selectedProfile == null) OutlinedTextField(image, { image = it }, label = { Text(localized("Docker 镜像", "Docker image")) }, singleLine = true)
             OutlinedTextField(desc, { desc = it }, label = { Text(localized("描述", "Description")) }, singleLine = true)
             OutlinedTextField(password, { password = it }, label = { Text(localized("code-server 密码", "code-server password")) }, singleLine = true)
             OutlinedTextField(provider, { provider = it }, label = { Text(localized("默认 Provider", "Default provider")) }, singleLine = true)
@@ -713,6 +759,7 @@ private fun CreateBoxDialog(onDismiss: () -> Unit, onCreate: (String, String, St
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismiss: () -> Unit) {
+    var kind by remember { mutableStateOf("chat") }
     var name by remember { mutableStateOf("Session") }
     var cwd by remember { mutableStateOf("/workspace") }
     var thinking by remember { mutableStateOf(box.pi.defaultThinkingLevel ?: "medium") }
@@ -721,6 +768,7 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
     var models by remember { mutableStateOf<List<PiModel>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
+    var launchArgsText by remember { mutableStateOf("") }
     var showFolderPicker by remember { mutableStateOf(false) }
     var showManualModel by remember { mutableStateOf(false) }
     LaunchedEffect(box.id) { loading = true; models = runCatching { viewModel.loadBoxModels(box.id) }.getOrDefault(emptyList()); loading = false }
@@ -729,7 +777,7 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
     val manualFieldsVisible = showManualModel || (!loading && models.isEmpty())
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = { Button(onClick = { viewModel.createSession(name, cwd, provider, model, thinking); onDismiss() }, enabled = name.isNotBlank()) { Text(localized("创建", "Create")) } },
+        confirmButton = { Button(onClick = { viewModel.createSession(name, cwd, provider, model, thinking, kind = kind, launchArgsText = launchArgsText); onDismiss() }, enabled = name.isNotBlank()) { Text(localized("创建", "Create")) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } },
         title = { Text(localized("新建 Session", "New session")) },
         text = {
@@ -744,6 +792,23 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
                             }
                         }
                     }
+                }
+                item {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(
+                            selected = kind == "chat",
+                            onClick = { kind = "chat"; if (name.startsWith("TUI Session")) name = "Session" },
+                            leadingIcon = { Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            label = { Text("Chat Session") }
+                        )
+                        FilterChip(
+                            selected = kind == "tui",
+                            onClick = { kind = "tui"; if (name == "Session" || name.startsWith("Session ")) name = "TUI Session" },
+                            leadingIcon = { Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            label = { Text("TUI Session") }
+                        )
+                    }
+                    Text(if (kind == "tui") localized("以真实 pi 终端界面运行；关闭终端只会 detach。", "Runs the real pi terminal UI; closing the terminal only detaches.") else localized("普通 Chat Session，使用 Android 原生聊天界面。", "Regular chat session using the native Android chat UI."), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
                 item {
                     CompactSessionTextField(
@@ -769,7 +834,7 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
                         Text(localized("浏览或新建工作目录", "Browse or create working folder"), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                item {
+                if (kind != "tui") item {
                     Text("Thinking", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         ThinkingLevels.forEach { level ->
@@ -782,7 +847,7 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
                         }
                     }
                 }
-                item {
+                if (kind != "tui") item {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Column(Modifier.weight(1f)) {
                             Text(localized("模型", "Model"), fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -799,7 +864,19 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-                if (manualFieldsVisible) item {
+                if (kind == "tui") item {
+                    Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(16.dp), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(localized("自定义 pi 参数", "Custom pi args"), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(localized("例如 -ne -ns -nt、--extension ./ext.ts。BoxedAgent 会自动管理 --mode 与 session。", "Examples: -ne -ns -nt, --extension ./ext.ts. BoxedAgent manages --mode and session automatically."), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                            CodeTextField("launchArgs", launchArgsText, { launchArgsText = it })
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                listOf("-ne", "-ns", "-nt", "--no-context-files", "--extension ").forEach { preset -> AssistChip(onClick = { launchArgsText = appendArgText(launchArgsText, preset) }, label = { Text(preset) }) }
+                            }
+                        }
+                    }
+                }
+                if (kind != "tui" && manualFieldsVisible) item {
                     Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(16.dp), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             CompactSessionTextField(provider, { provider = it }, localized("Provider（可选）", "Provider (optional)"), Icons.Rounded.Cloud)
@@ -807,8 +884,8 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
                         }
                     }
                 }
-                if (loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-                items(visible, key = { "${it.providerNameOrNull()}/${it.id}" }) { item ->
+                if (kind != "tui" && loading) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                if (kind != "tui") items(visible, key = { "${it.providerNameOrNull()}/${it.id}" }) { item ->
                     ModelPickerRow(
                         model = item,
                         selected = item.id == model && item.providerNameOrNull() == provider,
@@ -817,7 +894,7 @@ private fun CreateSessionDialog(box: BoxRecord, viewModel: AppViewModel, onDismi
                         onClick = { provider = item.providerNameOrNull().orEmpty(); model = item.id }
                     )
                 }
-                if (!loading && visible.isEmpty()) item { Text(localized("没有匹配模型，可手动填写 provider / model。", "No matching models. You can enter provider / model manually."), Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
+                if (kind != "tui" && !loading && visible.isEmpty()) item { Text(localized("没有匹配模型，可手动填写 provider / model。", "No matching models. You can enter provider / model manually."), Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
             }
         }
     )
@@ -1156,6 +1233,16 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             }
     }
 
+    fun openTuiSession(session: AgentSessionRecord) {
+        context.startActivity(Intent(context, TerminalActivity::class.java).apply {
+            putExtra(TerminalActivity.EXTRA_BASE_URL, viewModel.baseUrl())
+            putExtra(TerminalActivity.EXTRA_TOKEN, viewModel.bearerToken())
+            putExtra(TerminalActivity.EXTRA_MODE, TerminalActivity.MODE_TUI)
+            putExtra(TerminalActivity.EXTRA_SESSION_ID, session.id)
+            putExtra(TerminalActivity.EXTRA_SESSION_NAME, session.name)
+        })
+    }
+
     val activeBox = state.activeBox
     if (activeBox == null) {
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -1178,6 +1265,21 @@ private fun ChatScreen(state: AppUiState, viewModel: AppViewModel) {
             }
             CenterWelcome(localized("选择或创建 Session", "Select or create a session"), localized("点击左上角打开 Sessions。", "Open Sessions from the top left."))
         }
+        return
+    }
+    if (session.kind == "tui") {
+        TuiSessionPlaceholder(
+            session = session,
+            box = activeBox,
+            resources = state.activeResources,
+            isWorking = state.activeTurn,
+            onBoxes = { viewModel.setPanel(MainPanel.Boxes) },
+            onTools = { viewModel.setPanel(MainPanel.Tools) },
+            onRefresh = { viewModel.refresh() },
+            onOpen = { openTuiSession(session) },
+            onReload = { viewModel.reloadSession(session.id) },
+            onStop = { viewModel.stopSession(session.id) }
+        )
         return
     }
     val canSend = text.isNotBlank() || attachments.isNotEmpty()
@@ -1337,6 +1439,61 @@ private fun ScrollQuickActions(visible: Boolean, listState: LazyListState, messa
 private fun QuickJumpButton(icon: androidx.compose.ui.graphics.vector.ImageVector, contentDescription: String, onClick: () -> Unit) {
     Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = .92f), shadowElevation = 8.dp) {
         IconButton(onClick = onClick, modifier = Modifier.size(48.dp)) { Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(30.dp)) }
+    }
+}
+
+@Composable
+private fun TuiSessionPlaceholder(
+    session: AgentSessionRecord,
+    box: BoxRecord?,
+    resources: PiLoadedResources?,
+    isWorking: Boolean,
+    onBoxes: () -> Unit,
+    onTools: () -> Unit,
+    onRefresh: () -> Unit,
+    onOpen: () -> Unit,
+    onReload: () -> Unit,
+    onStop: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        ChatTopBar(
+            session = session,
+            stats = null,
+            autoCompact = false,
+            isWorking = isWorking,
+            onBoxes = onBoxes,
+            onTools = onTools,
+            onRefresh = onRefresh
+        )
+        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically), horizontalAlignment = Alignment.CenterHorizontally) {
+            Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+                Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.padding(18.dp).size(42.dp))
+            }
+            Text(localized("TUI Session 在独立终端中运行", "TUI session runs in a separate terminal"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text(
+                localized("关闭终端只会 detach，不会结束后端 pi TUI 进程。", "Closing the terminal only detaches; it does not stop the backend pi TUI process."),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(session.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(listOf("pi TUI", box?.name, session.cwd ?: "/workspace", session.status).filterNotNull().joinToString(" · "), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    session.launchArgs.takeIf { it.isNotEmpty() }?.let { Text(it.joinToString(" "), fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    resources?.let { Text(formatLoadedResourcesSummary(it), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
+                    session.error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+                }
+            }
+            Button(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Rounded.OpenInNew, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(localized("打开 TUI 终端", "Open TUI terminal"))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onReload, modifier = Modifier.weight(1f)) { Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Reload") }
+                OutlinedButton(onClick = onStop, modifier = Modifier.weight(1f), colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)) { Icon(Icons.Rounded.Stop, contentDescription = null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(localized("停止", "Stop")) }
+            }
+        }
     }
 }
 
@@ -1510,6 +1667,13 @@ private fun ChatComposer(
                     state.activeQueue.followUp.forEach { AssistChip(onClick = {}, label = { Text("Follow-up · $it") }) }
                 }
             }
+            SlashCommandSuggestions(
+                text = text,
+                commands = state.activeCommands,
+                onLoad = { state.activeSessionId?.let { viewModel.loadSessionCommands(it) } },
+                onChoose = { command -> onTextChange(applySlashCommand(text, command.name)) }
+            )
+            state.activeResources?.let { resources -> LoadedResourcesCompact(resources) }
             if (attachments.isNotEmpty()) FlowRow(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.Start),
@@ -1588,6 +1752,53 @@ private fun ChatComposer(
         viewModel = viewModel,
         onSend = onSend
     )
+}
+
+@Composable
+private fun LoadedResourcesCompact(resources: PiLoadedResources) {
+    val summary = formatLoadedResourcesSummary(resources)
+    if (summary.isBlank()) return
+    Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = RoundedCornerShape(16.dp)) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+            Icon(Icons.Rounded.Inventory2, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(17.dp))
+            Text(summary, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun SlashCommandSuggestions(text: String, commands: List<PiSlashCommand>, onLoad: suspend () -> Unit, onChoose: (PiSlashCommand) -> Unit) {
+    val completion = remember(text) { slashCompletionQuery(text) }
+    var loading by remember { mutableStateOf(false) }
+    LaunchedEffect(completion != null) {
+        if (completion != null && commands.isEmpty() && !loading) {
+            loading = true
+            runCatching { onLoad() }
+            loading = false
+        }
+    }
+    if (completion == null) return
+    val builtIns = listOf(PiSlashCommand(name = "reload", description = localized("重启当前 pi session 并重新加载资源", "Reload current pi session and resources"), source = "builtin"))
+    val visible = remember(commands, completion) { (builtIns + commands).filter { it.name.contains(completion, ignoreCase = true) }.distinctBy { it.name }.take(8) }
+    if (visible.isEmpty() && !loading) return
+    Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(18.dp), border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.padding(6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Rounded.Bolt, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(17.dp))
+                Text(localized("Slash 命令", "Slash commands"), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                if (loading) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+            }
+            visible.forEach { command ->
+                ListItem(
+                    headlineContent = { Text("/${command.name}", fontFamily = FontFamily.Monospace, fontSize = 13.sp, maxLines = 1) },
+                    supportingContent = { Text(command.description ?: command.source, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp) },
+                    leadingContent = { Icon(if (command.source == "builtin") Icons.Rounded.Refresh else Icons.Rounded.Extension, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { onChoose(command) }
+                )
+            }
+            if (commands.isEmpty() && !loading) Text(localized("暂无 extension 命令", "No extension commands"), Modifier.padding(10.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+        }
+    }
 }
 
 @Composable
@@ -3097,6 +3308,8 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
     var createName by remember { mutableStateOf("") }
     var pendingDownload by remember { mutableStateOf<DownloadedFile?>(null) }
     var actionEntry by remember { mutableStateOf<FileEntry?>(null) }
+    var copyEntry by remember { mutableStateOf<FileEntry?>(null) }
+    var moveEntry by remember { mutableStateOf<FileEntry?>(null) }
     var deleteEntry by remember { mutableStateOf<FileEntry?>(null) }
     var largePreviewEntry by remember { mutableStateOf<FileEntry?>(null) }
     var apkPermissionEntry by remember { mutableStateOf<FileEntry?>(null) }
@@ -3275,11 +3488,15 @@ private fun FileBrowserTab(state: AppUiState, viewModel: AppViewModel) {
             }
             if (entry.type == "file") ListItem(headlineContent = { Text(localized("附加到消息", "Attach to message")) }, supportingContent = { Text(fileRef(workspaceAbsPath(entry.path))) }, leadingContent = { Icon(Icons.Rounded.AttachFile, contentDescription = null) }, modifier = Modifier.clickable { attach(entry); actionEntry = null })
             ListItem(headlineContent = { Text(localized("复制路径", "Copy path")) }, supportingContent = { Text(workspaceAbsPath(entry.path)) }, leadingContent = { Icon(Icons.Rounded.ContentCopy, contentDescription = null) }, modifier = Modifier.clickable { clipboard.setText(AnnotatedString(workspaceAbsPath(entry.path))); actionEntry = null; viewModel.emit(pathCopiedText) })
+            ListItem(headlineContent = { Text(localized("复制到…", "Copy to…")) }, supportingContent = { Text(defaultCopyTarget(entry.path)) }, leadingContent = { Icon(Icons.Rounded.FileCopy, contentDescription = null) }, modifier = Modifier.clickable { copyEntry = entry; actionEntry = null })
+            ListItem(headlineContent = { Text(localized("移动 / 重命名…", "Move / rename…")) }, supportingContent = { Text(entry.path) }, leadingContent = { Icon(Icons.Rounded.DriveFileMove, contentDescription = null) }, modifier = Modifier.clickable { moveEntry = entry; actionEntry = null })
             if (entry.type == "file") ListItem(headlineContent = { Text(localized("下载", "Download")) }, leadingContent = { Icon(Icons.Rounded.Download, contentDescription = null) }, modifier = Modifier.clickable { scope.launch { val file = viewModel.downloadFile(entry.path); pendingDownload = file; createDoc.launch(file.name) }; actionEntry = null })
             ListItem(headlineContent = { Text(localized("删除", "Delete"), color = MaterialTheme.colorScheme.error) }, leadingContent = { Icon(Icons.Rounded.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) }, modifier = Modifier.clickable { deleteEntry = entry; actionEntry = null })
             Spacer(Modifier.height(18.dp))
         }
     }
+    copyEntry?.let { entry -> FileOperationDialog(title = localized("复制到", "Copy to"), entry = entry, initialTarget = defaultCopyTarget(entry.path), onDismiss = { copyEntry = null }, onConfirm = { target -> scope.launch { runCatching { viewModel.copyFile(entry.path, workspaceRelPath(target)); copyEntry = null; loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) }.onFailure { error = it.message } } }) }
+    moveEntry?.let { entry -> FileOperationDialog(title = localized("移动 / 重命名", "Move / rename"), entry = entry, initialTarget = entry.path, onDismiss = { moveEntry = null }, onConfirm = { target -> scope.launch { runCatching { viewModel.moveFile(entry.path, workspaceRelPath(target)); moveEntry = null; path = parentPath(workspaceRelPath(target)); loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) }.onFailure { error = it.message } } }) }
     deleteEntry?.let { entry -> ConfirmDialog(localized("删除", "Delete") + " ${entry.name}", localized("确定删除", "Delete") + " ${workspaceAbsPath(entry.path)}?", onDismiss = { deleteEntry = null }, onConfirm = { scope.launch { viewModel.deleteFile(entry.path); deleteEntry = null; loadFiles(viewModel, path, { loading = it }, { entries = it }, { error = it }) } }) }
     apkPermissionEntry?.let { entry ->
         ApkInstallPermissionDialog(
@@ -3363,6 +3580,24 @@ private suspend fun loadFiles(viewModel: AppViewModel, path: String, setLoading:
     setLoading(true); setError(null)
     runCatching { viewModel.listFiles(path) }.onSuccess { setEntries(it) }.onFailure { setError(it.message) }
     setLoading(false)
+}
+
+@Composable
+private fun FileOperationDialog(title: String, entry: FileEntry, initialTarget: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var target by remember(entry.path, initialTarget) { mutableStateOf(workspaceAbsPath(initialTarget)) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { Button(onClick = { onConfirm(target) }, enabled = workspaceRelPath(target).isNotBlank()) { Text(localized("确定", "OK")) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(localized("取消", "Cancel")) } },
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(entry.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(workspaceAbsPath(entry.path), fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(target, { target = it }, label = { Text(localized("目标路径", "Target path")) }, singleLine = true, modifier = Modifier.fillMaxWidth(), textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp))
+            }
+        }
+    )
 }
 
 private data class PreviewDownloadState(val entry: FileEntry, val bytesRead: Long, val totalBytes: Long, val installApk: Boolean = false)
@@ -3591,6 +3826,36 @@ private fun parseObject(text: String): JsonObject {
 }
 private fun parseEnv(text: String): Map<String, String> = parseObject(text).mapValues { it.value.jsonPrimitive.contentOrNull ?: it.value.toString() }
 private fun parseExtraArgs(text: String): List<String> = text.lines().map { it.trim() }.filter { it.isNotBlank() && !it.startsWith("#") }
+private fun appendArgText(current: String, arg: String): String = current.trimEnd().let { if (it.isBlank()) arg else "$it $arg" }
+private fun slashCompletionQuery(text: String): String? {
+    val trimmed = text.trimStart()
+    if (!trimmed.startsWith("/") || trimmed.contains('\n')) return null
+    val token = trimmed.substringAfter('/').substringBefore(' ')
+    return token.takeIf { it.length <= 48 }
+}
+private fun applySlashCommand(text: String, name: String): String {
+    val leading = text.takeWhile { it.isWhitespace() }
+    val rest = text.trimStart()
+    val tail = rest.substringAfter(' ', "")
+    return buildString {
+        append(leading)
+        append('/')
+        append(name)
+        if (tail.isNotBlank()) append(' ').append(tail) else append(' ')
+    }
+}
+private fun formatLoadedResourcesSummary(resources: PiLoadedResources): String {
+    val parts = listOf(
+        "Context" to resources.contextFiles.size,
+        "Packages" to resources.packages.size,
+        "Extensions" to resources.extensions.size,
+        "Skills" to resources.skills.size,
+        "Prompts" to resources.prompts.size,
+        "Themes" to resources.themes.size
+    ).filter { it.second > 0 }.joinToString(" · ") { "${it.first} ${it.second}" }
+    val warnings = resources.diagnostics.takeIf { it.isNotEmpty() }?.let { " · Warnings ${it.size}" }.orEmpty()
+    return listOf(resources.reason?.let { "reason=$it" }, resources.cwd, parts.ifBlank { null }).filterNotNull().joinToString(" · ") + warnings
+}
 private fun normalizeFileBrowserPath(value: String): String {
     val parts = mutableListOf<String>()
     value.replace('\\', '/').split('/').forEach { part ->
@@ -3604,6 +3869,14 @@ private fun normalizeFileBrowserPath(value: String): String {
 }
 private fun bookmarkLabel(path: String): String = normalizeFileBrowserPath(path).let { normalized -> if (normalized == ".") "workspace" else normalized.split('/').lastOrNull().orEmpty().ifBlank { normalized } }
 private fun parentPath(path: String): String = if (path == "." || path.isBlank()) "." else path.split('/').dropLast(1).joinToString("/").ifBlank { "." }
+private fun defaultCopyTarget(path: String): String {
+    val rel = workspaceRelPath(path)
+    val parent = parentPath(rel)
+    val name = rel.substringAfterLast('/')
+    val dot = name.lastIndexOf('.').takeIf { it > 0 }
+    val copyName = if (dot != null) "${name.substring(0, dot)} copy${name.substring(dot)}" else "$name copy"
+    return if (parent == ".") copyName else "$parent/$copyName"
+}
 private fun workspaceRelPath(path: String): String {
     val trimmed = path.trim()
     val rel = when {
