@@ -32,6 +32,7 @@ class TerminalActivity : Activity() {
     private var webSocket: WebSocket? = null
     private var ctrlActive = false
     private var altActive = false
+    private val terminalTypeface: Typeface by lazy { loadTerminalTypeface() }
     private var textSizeSp = 14f
     private var firstResizeConnected = false
     private var terminalMode: String = MODE_SHELL
@@ -268,7 +269,7 @@ class TerminalActivity : Activity() {
         textSize = 12f
         setTextColor(Color.WHITE)
         gravity = Gravity.CENTER
-        typeface = Typeface.MONOSPACE
+        typeface = terminalTypeface
         background = keyBackground(false)
         setOnClickListener { onClick() }
     }
@@ -280,6 +281,10 @@ class TerminalActivity : Activity() {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun loadTerminalTypeface(): Typeface = runCatching {
+        Typeface.createFromAsset(assets, TERMINAL_FONT_ASSET)
+    }.getOrDefault(Typeface.MONOSPACE)
 
     private data class Key(val label: String, val sequence: String = "", val special: SpecialKey? = null, val ctrl: Char? = null)
     private enum class SpecialKey { CTRL, ALT }
@@ -294,5 +299,6 @@ class TerminalActivity : Activity() {
         const val EXTRA_SESSION_NAME = "sessionName"
         const val MODE_SHELL = "shell"
         const val MODE_TUI = "tui"
+        private const val TERMINAL_FONT_ASSET = "fonts/dejavu_sans_mono_nerd_font_mono_regular.ttf"
     }
 }

@@ -64,8 +64,9 @@ class RemoteTerminalView(context: Context) : View(context) {
     private val handleRadiusPx = dp(6f)
     private val handleHitRadiusPx = dp(24f)
 
+    private val terminalTypeface: Typeface = loadTerminalTypeface(context)
     private var textSizeSp = 14f
-    private var renderer = TerminalRenderer(spToPx(textSizeSp), Typeface.MONOSPACE)
+    private var renderer = TerminalRenderer(spToPx(textSizeSp), terminalTypeface)
     private var emulator: TerminalEmulator? = null
     private var columns = 0
     private var rows = 0
@@ -135,7 +136,7 @@ class RemoteTerminalView(context: Context) : View(context) {
         if (abs(value - textSizeSp) < 0.1f) return
         stopTextSelectionMode()
         textSizeSp = value
-        renderer = TerminalRenderer(spToPx(value), Typeface.MONOSPACE)
+        renderer = TerminalRenderer(spToPx(value), terminalTypeface)
         resizeTerminal(force = true)
         invalidate()
     }
@@ -710,8 +711,13 @@ class RemoteTerminalView(context: Context) : View(context) {
     private data class HandleCenter(val x: Float, val y: Float)
 
     private companion object {
+        private const val TERMINAL_FONT_ASSET = "fonts/dejavu_sans_mono_nerd_font_mono_regular.ttf"
         const val MENU_COPY = 1
         const val MENU_PASTE = 2
         const val MENU_SELECT_ALL = 3
+
+        private fun loadTerminalTypeface(context: Context): Typeface = runCatching {
+            Typeface.createFromAsset(context.assets, TERMINAL_FONT_ASSET)
+        }.getOrDefault(Typeface.MONOSPACE)
     }
 }
