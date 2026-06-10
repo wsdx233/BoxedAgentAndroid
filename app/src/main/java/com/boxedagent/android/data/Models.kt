@@ -239,6 +239,16 @@ data class PatchBoxRequest(
 )
 
 @Serializable
+data class AgentSessionNotice(
+    val id: String = "",
+    val kind: String = "extension_notify",
+    val title: String = "",
+    val message: String = "",
+    val notifyType: String? = null,
+    val timestamp: String = ""
+)
+
+@Serializable
 data class AgentSessionRecord(
     val id: String = "",
     val boxId: String = "",
@@ -257,7 +267,8 @@ data class AgentSessionRecord(
     val piSessionId: String? = null,
     val launchArgs: List<String> = emptyList(),
     val error: String? = null,
-    val loadedResources: PiLoadedResources? = null
+    val loadedResources: PiLoadedResources? = null,
+    val notices: List<AgentSessionNotice> = emptyList()
 )
 
 @Serializable
@@ -619,7 +630,9 @@ data class ChatMessage(
     val toolResult: String? = null,
     val toolResultMeta: ToolResultMeta? = null,
     val toolStatus: String? = null,
-    val transport: ChatMessageTransportMeta? = null
+    val transport: ChatMessageTransportMeta? = null,
+    val noticeId: String? = null,
+    val sourceIndex: Long? = null
 )
 
 data class DraftAttachment(

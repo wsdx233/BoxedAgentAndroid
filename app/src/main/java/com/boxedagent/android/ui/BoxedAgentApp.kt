@@ -1673,7 +1673,6 @@ private fun ChatComposer(
                 onLoad = { state.activeSessionId?.let { viewModel.loadSessionCommands(it) } },
                 onChoose = { command -> onTextChange(applySlashCommand(text, command.name)) }
             )
-            state.activeResources?.let { resources -> LoadedResourcesCompact(resources) }
             if (attachments.isNotEmpty()) FlowRow(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.Start),
@@ -3854,7 +3853,7 @@ private fun formatLoadedResourcesSummary(resources: PiLoadedResources): String {
         "Themes" to resources.themes.size
     ).filter { it.second > 0 }.joinToString(" · ") { "${it.first} ${it.second}" }
     val warnings = resources.diagnostics.takeIf { it.isNotEmpty() }?.let { " · Warnings ${it.size}" }.orEmpty()
-    return listOf(resources.reason?.let { "reason=$it" }, resources.cwd, parts.ifBlank { null }).filterNotNull().joinToString(" · ") + warnings
+    return listOf(resources.cwd, parts.ifBlank { null }).filterNotNull().joinToString(" · ") + warnings
 }
 private fun normalizeFileBrowserPath(value: String): String {
     val parts = mutableListOf<String>()

@@ -22,6 +22,7 @@ fun normalizePiMessages(messages: List<JsonElement>): List<ChatMessage> {
         val obj = element.asObject() ?: return@forEachIndexed
         val transport = transportMeta(obj)
         val timestamp = obj.long("timestamp") ?: System.currentTimeMillis()
+        val sourceIndex = obj.long("__boxedagentSourceIndex")
         when (obj.string("role")) {
             "user" -> {
                 val content = obj["content"]
@@ -34,7 +35,8 @@ fun normalizePiMessages(messages: List<JsonElement>): List<ChatMessage> {
                     text = expanded.text.ifBlank { attachmentSummary(attachments) },
                     attachments = attachments,
                     timestamp = timestamp,
-                    transport = transport
+                    transport = transport,
+                    sourceIndex = sourceIndex
                 )
             }
             "assistant" -> {
@@ -47,7 +49,8 @@ fun normalizePiMessages(messages: List<JsonElement>): List<ChatMessage> {
                         text = parts.text.ifBlank { summary },
                         thinking = parts.thinking.ifBlank { null },
                         timestamp = timestamp,
-                        transport = transport
+                        transport = transport,
+                        sourceIndex = sourceIndex
                     )
                 }
                 parts.tools.forEachIndexed { toolIdx, tool ->
@@ -60,11 +63,27 @@ fun normalizePiMessages(messages: List<JsonElement>): List<ChatMessage> {
                         toolName = tool.toolName,
                         toolArgs = tool.toolArgs,
                         toolStatus = "pending",
-                        transport = transport
+                        transport = transport,
+                        sourceIndex = sourceIndex
                     )
                     out += msg
                     tool.toolCallId?.let { toolCalls[it] = out.lastIndex }
                 }
+            }
+            "system" -> {
+                val notice = obj.obj("__boxedagentNotice")
+                val noticeTitle = notice?.string("title") ?: "system"
+                val noticeId = notice?.string("id")
+                val body = contentToText(obj["content"]).ifBlank { obj.string("message") ?: obj.string("text") ?: "" }
+                out += ChatMessage(
+                    id = "$idx-$timestamp-system",
+                    role = "system",
+                    text = if (notice != null) runtimeNoticeText(noticeTitle, body) else body,
+                    timestamp = timestamp,
+                    transport = transport,
+                    noticeId = noticeId,
+                    sourceIndex = sourceIndex
+                )
             }
             else -> {
                 val callId = obj.string("tool_call_id") ?: obj.string("toolCallId") ?: obj.string("id") ?: "$idx-$timestamp"
@@ -81,7 +100,8 @@ fun normalizePiMessages(messages: List<JsonElement>): List<ChatMessage> {
                     toolResult = contentToText(obj["content"]).ifBlank { resultToText(obj["result"]).ifBlank { pretty(element) } },
                     toolResultMeta = toolResultMeta(obj["result"] ?: obj["content"]),
                     timestamp = timestamp,
-                    transport = transport
+                    transport = transport,
+                    sourceIndex = sourceIndex
                 )
                 if (priorIndex != null) out[priorIndex] = if (transport == null && prior?.transport != null) msg.copy(transport = prior.transport) else msg else out += msg
             }
@@ -288,6 +308,12 @@ private fun stringMeta(records: List<JsonObject>, vararg keys: String): String? 
         return value.take(120)
     }
     return null
+}
+
+fun runtimeNoticeText(title: String, detail: String? = null): String {
+    val detailText = detail.orEmpty().trim()
+    if (detailText.isBlank()) return "**$title**"
+    return "**$title**\n\n```text\n${detailText.replace("```", "`\u200b``")}\n```"
 }
 
 fun ChatMessage.preview(): String = text.ifBlank { toolResult ?: toolName ?: attachmentSummary(attachments) }

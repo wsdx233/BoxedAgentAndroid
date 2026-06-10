@@ -538,6 +538,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         patchSessionLocal(sessionId, resources = resources, cwd = resources.cwd)
                     }
             }
+            "extension_ui" -> handleExtensionUiMessage(sessionId, msg.obj("request") ?: return)
             "agent_event" -> handleAgentEvent(sessionId, msg.obj("event") ?: return)
         }
     }
@@ -561,7 +562,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 appendSystem(sessionId, if (event.boolean("aborted") == true) "上下文压缩已取消" else "上下文压缩完成${if (event.boolean("willRetry") == true) "，将自动重试" else ""}${event.string("errorMessage")?.let { "：$it" } ?: ""}")
                 refreshSessionRuntime(sessionId)
             }
+            "extension_notify" -> appendExtensionNotice(
+                sessionId = sessionId,
+                notifyType = event.string("notifyType") ?: "info",
+                message = event.string("message").orEmpty(),
+                noticeId = event.string("noticeId")
+            )
         }
+    }
+
+    private fun handleExtensionUiMessage(sessionId: String, request: JsonObject) {
+        if (request.string("method") == "notify") {
+            appendExtensionNotice(
+                sessionId = sessionId,
+                notifyType = request.string("notifyType") ?: "info",
+                message = request.string("message").orEmpty(),
+                noticeId = request.string("noticeId")
+            )
+        }
+    }
+
+    private fun appendExtensionNotice(sessionId: String, notifyType: String, message: String, noticeId: String?) {
+        val body = runtimeNoticeText("extension $notifyType", message)
+        appendSystem(sessionId, body, noticeId = noticeId, dedupe = true)
     }
 
     private fun handleMessageUpdate(sessionId: String, delta: JsonObject) {
@@ -597,7 +620,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { old -> old.copy(messagesBySession = old.messagesBySession + (sessionId to (old.messagesBySession[sessionId].orEmpty() + msg))) }
     }
 
-    private fun appendSystem(sessionId: String, text: String) = appendMessage(sessionId, ChatMessage(newMessageId(), "system", text, System.currentTimeMillis()))
+    private fun appendSystem(sessionId: String, text: String, noticeId: String? = null, dedupe: Boolean = false) {
+        _state.update { old ->
+            val current = old.messagesBySession[sessionId].orEmpty()
+            if (dedupe && current.any { if (noticeId != null) it.noticeId == noticeId else it.role == "system" && it.text == text }) old
+            else old.copy(messagesBySession = old.messagesBySession + (sessionId to (current + ChatMessage(newMessageId(), "system", text, System.currentTimeMillis(), noticeId = noticeId))))
+        }
+    }
 
     private fun queueAssistantDelta(sessionId: String, textDelta: String = "", thinkingDelta: String = "") {
         if (textDelta.isEmpty() && thinkingDelta.isEmpty()) return
